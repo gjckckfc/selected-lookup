@@ -1,0 +1,20 @@
+# 词典数据（体积大，由 scripts/fetch_dict.py 下载生成）
+data/*.zip
+data/*.sqlite
+data/*.db
+data/*.sqlite-journal
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
+# 运行时日志
+logs/
