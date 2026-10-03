@@ -57,27 +57,14 @@ class SettingsWindow:
         ttk.Label(self.win, text="改完立即生效，自动保存", style="Hint.TLabel").pack(
             anchor="w", pady=(2, 12))
 
-        # ---- 取词触发 ----
-        trigger = ttk.LabelFrame(self.win, text="取词触发", padding=12, style="Group.TLabelframe")
-        trigger.pack(fill="x")
-        self._check(trigger, "启用取词（关闭后拖选什么都不弹）", "enabled")
-        self._scale(trigger, "拖选判定阈值", "drag_threshold", 2, 40, 1, "px",
+        # ---- 取词 ----
+        group = ttk.LabelFrame(self.win, text="取词", padding=12, style="Group.TLabelframe")
+        group.pack(fill="x")
+        self._check(group, "启用取词（关闭后拖选什么都不弹）", "enabled")
+        self._scale(group, "拖选判定阈值", "drag_threshold", 2, 40, 1, "px",
                     "只有拖动超过这个距离才认作选择，误弹就调大")
-
-        # ---- 浮窗外观 ----
-        look = ttk.LabelFrame(self.win, text="浮窗外观", padding=12, style="Group.TLabelframe")
-        look.pack(fill="x", pady=(14, 0))
-        self._scale(look, "最长停留时间", "hide_after", 2, 30, 1, "秒",
+        self._scale(group, "最长停留时间", "hide_after", 2, 30, 1, "秒",
                     "取消选中会立刻收起；一直选着不动则超过这个时间收起")
-        self._scale(look, "圆角半径", "corner_radius", 0, 28, 1, "px",
-                    "0 = 直角，建议 12–16")
-        self._scale(look, "不透明度", "opacity", 40, 100, 1, "%",
-                    "数值越大越不透明")
-        self._scale(look, "浮窗宽度", "popup_width", 220, 560, 10, "px",
-                    "固定宽度，不随内容变化")
-        self._scale(look, "浮窗最大高度", "max_height", 200, 1000, 10, "px",
-                    "整个浮窗最高到多少，内容再多就用滚轮看")
-        self._check(look, "鼠标移到浮窗上时变清晰", "hover_opaque")
 
         # ---- 底部按钮 ----
         footer = ttk.Frame(self.win)

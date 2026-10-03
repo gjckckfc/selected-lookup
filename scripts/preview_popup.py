@@ -33,29 +33,25 @@ def main():
     parser.add_argument("--word", default=HEAD, help="预览哪个词")
     parser.add_argument("--opacity", type=int, help="临时覆盖不透明度, 单位百分比")
     parser.add_argument("--radius", type=int, help="临时覆盖圆角半径, 单位像素")
+    parser.add_argument("--width", type=int, help="临时覆盖宽度, 单位像素")
     parser.add_argument("--hover", type=int, help="把第几个单词块显示成悬停高亮(从 0 数)")
     parser.add_argument("--long", action="store_true", help="用一长段英文原文来预览")
     args = parser.parse_args()
 
     settings = Settings(ROOT / "settings.json")
-    if args.opacity is not None:
-        settings.values["opacity"] = args.opacity
-    if args.radius is not None:
-        settings.values["corner_radius"] = args.radius
     dictionary = Dictionary(ROOT / "data" / "ecdict.sqlite",
                             ROOT / "data" / "inflection.sqlite")
 
     root = tk.Tk()
     root.withdraw()
-    popup = Popup(
-        root,
-        hide_after=settings.get("hide_after"),
-        radius=settings.get("corner_radius"),
-        opacity=settings.get("opacity"),
-        hover_opaque=settings.get("hover_opaque"),
-        width=settings.get("popup_width"),
-        max_height=settings.get("max_height"),
-    )
+    overrides = {}
+    if args.opacity is not None:
+        overrides["opacity"] = args.opacity
+    if args.radius is not None:
+        overrides["radius"] = args.radius
+    if args.width is not None:
+        overrides["width"] = args.width
+    popup = Popup(root, hide_after=settings.get("hide_after"), **overrides)
     result = dictionary.lookup(LONG_SAMPLE if args.long else args.word)
     popup.show(result, 420, 320)
 
@@ -79,9 +75,8 @@ def main():
         window.open()
 
     print("浮窗已显示, 关闭窗口或按 Ctrl+C 结束")
-    print("当前: 圆角 %s px / 不透明度 %s%% / 停留 %s 秒" % (
-        settings.get("corner_radius"), settings.get("opacity"),
-        settings.get("hide_after")))
+    print("当前: 宽 %s px / 圆角 %s px / 不透明度 %s%% / 停留 %s 秒" % (
+        popup.width, popup.radius, popup.opacity, popup.hide_after))
     try:
         root.mainloop()
     except KeyboardInterrupt:

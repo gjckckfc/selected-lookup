@@ -48,10 +48,16 @@ BUTTON_FG = "#c9d6ea"
 BUTTON_ACTIVE = "#3b4a63"
 
 FONT_FAMILY = "Microsoft YaHei UI"
-# 尺寸: 固定值, 不随内容伸缩。这是阅读时的配角, 尺寸稳定且小才不喧宾夺主。
-DEFAULT_WIDTH = 300       # 浮窗总宽度(px); 再窄标题和标签就会折行
-DEFAULT_MAX_HEIGHT = 380  # 浮窗最大高度(px), 装不下就滚
-PADDING_X = 32            # 左右内边距 + 边框
+# ---------------------------------------------------------------------------
+# 外观常量: 这里是唯一的调整入口, 不再开放成用户设置。
+# 浮窗是阅读时的配角, 样子和尺寸由我们先定好。
+# ---------------------------------------------------------------------------
+DEFAULT_WIDTH = 300             # 浮窗总宽度(px); 再窄标题和标签就会折行
+DEFAULT_MAX_HEIGHT = 380        # 浮窗最大高度(px), 装不下就滚
+DEFAULT_RADIUS = 14             # 圆角半径(px), 12-16 之间比较好看
+DEFAULT_OPACITY = 88            # 不透明度(%), 100 = 完全不透明
+DEFAULT_HOVER_OPAQUE = True     # 鼠标移上去时变完全不透明, 方便看清
+PADDING_X = 32                  # 左右内边距 + 边框
 DRAG_SLOP = 4            # 松开时位移小于这个值算"点击", 否则算"拖动"
 MAX_DEF_LINES = 3        # 每个单词块最多显示几行释义
 MAX_ORIGIN_LINES = 2     # 原文最多显示几行, 超出收起
@@ -77,8 +83,9 @@ gdi32.CreateRoundRectRgn.argtypes = [ctypes.c_int] * 6
 
 
 class Popup:
-    def __init__(self, master, hide_after=5.0, radius=14, opacity=88,
-                 hover_opaque=True, width=DEFAULT_WIDTH,
+    def __init__(self, master, hide_after=5.0, radius=DEFAULT_RADIUS,
+                 opacity=DEFAULT_OPACITY,
+                 hover_opaque=DEFAULT_HOVER_OPAQUE, width=DEFAULT_WIDTH,
                  max_height=DEFAULT_MAX_HEIGHT, on_geometry=None):
         self.master = master
         self.hide_after = hide_after
@@ -172,34 +179,10 @@ class Popup:
             # SetWindowRgn 会接管这块 region 的所有权, 不需要我们释放
             user32.SetWindowRgn(self._hwnd, region, True)
 
-    def apply_settings(self, radius=None, opacity=None, hide_after=None,
-                       hover_opaque=None, width=None, max_height=None):
-        if radius is not None:
-            self.radius = radius
-        if opacity is not None:
-            self.opacity = max(40, min(100, opacity))
+    def apply_settings(self, hide_after=None):
+        """外观不开放给用户改, 这里只接受会影响行为的那一项。"""
         if hide_after is not None:
             self.hide_after = hide_after
-        if hover_opaque is not None:
-            self.hover_opaque = hover_opaque
-        if width is not None:
-            self.width = max(220, width)
-            if self._last_result is not None:
-                # 折行位置是按宽度算好的, 宽度变了得重排
-                self._render(self._last_result)
-        if max_height is not None:
-            self.max_height = max_height
-        self._hovering = False
-        if not self._hwnd:
-            return
-        if self.win.winfo_viewable():
-            self._resize_in_place()
-        else:
-            self._layout()
-        win_w = self.win.winfo_width() or self.win.winfo_reqwidth()
-        win_h = self.win.winfo_height() or self.win.winfo_reqheight()
-        self._apply_alpha(self.opacity)
-        self._apply_round_region(win_w, win_h)
 
     # ------------------------------------------------------------------
     # 滚动
