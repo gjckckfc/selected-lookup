@@ -191,7 +191,8 @@ class SelectionWatcher:
 
         self._events = queue.Queue()
         self._down_pt = None
-        self._dismiss_at = None          # 单击后延迟收起的时间点
+        self._ignore_rect = None         # 浮窗占的区域, 按在这里的手势全局逻辑不参与
+        self._ignored = False
         self._last_down_time = 0.0
         self._click_count = 0
         self.double_click_window = 0.4   # 两次按下间隔小于这个值算双击
@@ -210,25 +211,42 @@ class SelectionWatcher:
 
     # ----- 钩子回调：必须是"快进快出" -----
 
+    def set_ignore_rect(self, rect):
+        """告诉钩子: 这块矩形是浮窗自己的地盘(拖动、点按钮用)。传 None 表示没有。"""
+        self._ignore_rect = tuple(rect) if rect else None
+
+    def _in_ignore_rect(self, x, y):
+        rect = self._ignore_rect
+        if not rect:
+            return False
+        left, top, right, bottom = rect
+        return left <= x <= right and top <= y <= bottom
+
     def _hook_proc(self, n_code, w_param, l_param):
         if n_code == 0:
             try:
                 if w_param == WM_LBUTTONDOWN:
                     data = ctypes.cast(l_param, ctypes.POINTER(MSLLHOOKSTRUCT)).contents
-                    self._down_pt = (data.pt.x, data.pt.y)
-                    # 任何一次按下都取消"待收起", 双击/三击选词才不会被误收
-                    self._dismiss_at = None
-                    now = time.monotonic()
-                    if now - self._last_down_time <= self.double_click_window:
-                        self._click_count += 1
+                    x, y = data.pt.x, data.pt.y
+                    self._ignored = self._in_ignore_rect(x, y)
+                    if self._ignored:
+                        # 按在浮窗上: 这次手势完全交给浮窗, 不取词也不收起
+                        self._down_pt = None
                     else:
-                        self._click_count = 1
-                    self._last_down_time = now
+                        self._down_pt = (x, y)
+                        now = time.monotonic()
+                        if now - self._last_down_time <= self.double_click_window:
+                            self._click_count += 1
+                        else:
+                            self._click_count = 1
+                        self._last_down_time = now
                 elif w_param == WM_LBUTTONUP:
                     data = ctypes.cast(l_param, ctypes.POINTER(MSLLHOOKSTRUCT)).contents
                     start = self._down_pt
                     self._down_pt = None
-                    if start and not self.paused:
+                    if self._ignored:
+                        self._ignored = False
+                    elif start and not self.paused:
                         dx = abs(data.pt.x - start[0])
                         dy = abs(data.pt.y - start[1])
                         if dx >= self.drag_threshold or dy >= self.drag_threshold:
@@ -236,9 +254,9 @@ class SelectionWatcher:
                         elif self._click_count >= 2:
                             # 双击/三击也能选中词, 按取词处理
                             self._events.put((data.pt.x, data.pt.y))
-                        else:
-                            # 普通单击 = 取消选中, 但延后一点再收, 免得误伤双击
-                            self._dismiss_at = time.monotonic() + 0.22
+                        elif self.on_dismiss:
+                            # 普通单击 = 取消选中, 立即收起
+                            self.on_dismiss()
             except Exception as exc:  # 钩子里绝不能抛异常出去
                 self.log("hook error: %s" % exc)
         return user32.CallNextHookEx(None, n_code, w_param, l_param)
@@ -274,17 +292,6 @@ class SelectionWatcher:
                         self.on_selection(text.strip(), x, y)
                     except Exception as exc:
                         self.log("callback error: %s" % exc)
-                continue
-
-            # 单击后延迟收起: 期间若又按下鼠标(双击选词), 上面会把时间点清掉
-            deadline = self._dismiss_at
-            if deadline is not None and time.monotonic() >= deadline:
-                self._dismiss_at = None
-                if self.on_dismiss and not self.paused:
-                    try:
-                        self.on_dismiss()
-                    except Exception as exc:
-                        self.log("dismiss error: %s" % exc)
 
     # ----- 生命周期 -----
 

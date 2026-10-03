@@ -53,6 +53,7 @@ class App:
             radius=self.settings.get("corner_radius"),
             opacity=self.settings.get("opacity"),
             hover_opaque=self.settings.get("hover_opaque"),
+            on_geometry=self._sync_popup_rect,
         )
         self.results = queue.Queue()
         self.commands = queue.Queue()
@@ -80,6 +81,12 @@ class App:
             on_change=self._on_setting_changed,
             on_reset=self._apply_all_settings,
         )
+
+    def _sync_popup_rect(self):
+        """把浮窗当前占的矩形告诉钩子, 让按在浮窗上的手势不被当成选词。"""
+        watcher = getattr(self, "watcher", None)
+        if watcher is not None:
+            watcher.set_ignore_rect(self.popup.rect())
 
     def log(self, message):
         line = "%s  %s" % (time.strftime("%Y-%m-%d %H:%M:%S"), message)
