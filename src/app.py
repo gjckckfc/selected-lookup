@@ -17,8 +17,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from capture import MOD_ALT, MOD_CONTROL, SelectionWatcher  # noqa: E402
-from dictionary import Dictionary, Result  # noqa: E402
+from dictionary import Dictionary  # noqa: E402
 from popup import Popup  # noqa: E402
+from tray import TrayIcon  # noqa: E402
 
 HOTKEYS = [
     (MOD_CONTROL | MOD_ALT, ord("Q"), "quit"),
@@ -35,6 +36,8 @@ class App:
         self.root.withdraw()
         self.popup = Popup(self.root, hide_after=hide_after)
         self.results = queue.Queue()
+        self.commands = queue.Queue()
+        self.enabled = True
         self.watcher = SelectionWatcher(
             on_selection=self._on_selection,
             on_hotkey=self._on_hotkey,
@@ -42,7 +45,12 @@ class App:
             hotkeys=HOTKEYS,
             logger=self.log,
         )
-        self._paused = False
+        self.tray = TrayIcon(
+            enabled=True,
+            on_toggle=lambda: self.commands.put("toggle"),
+            on_quit=lambda: self.commands.put("quit"),
+            logger=self.log,
+        )
 
     def log(self, message):
         line = "%s  %s" % (time.strftime("%Y-%m-%d %H:%M:%S"), message)
@@ -59,22 +67,45 @@ class App:
         self.results.put((text, x, y))
 
     def _on_hotkey(self, name):
-        """在钩子线程里被调用。"""
-        if name == "quit":
-            self.root.after(0, self.quit)
-        elif name == "pause":
-            self._paused = not self._paused
-            self.watcher.paused = self._paused
-            self.log("paused=%s" % self._paused)
-            self.root.after(0, self._flash_pause)
+        """在钩子线程里被调用。只投递命令, 不碰界面。
 
-    def _flash_pause(self):
-        state = "已暂停" if self._paused else "已恢复"
-        notice = Result(kind="miss", query=state)
-        self.popup.show(notice, self.root.winfo_pointerx(), self.root.winfo_pointery())
+        以前这里直接调 root.after, 那是跨线程操作 tkinter, 会偶发失效。
+        """
+        self.commands.put(name)
+
+    def _toggle(self):
+        """在主线程里执行开关切换。"""
+        self.enabled = not self.enabled
+        self.watcher.paused = not self.enabled
+        self.tray.set_enabled(self.enabled)
+
+        if not self.enabled:
+            self.popup.hide()
+            # 关掉的瞬间, 队列里可能还排着刚抓到的结果, 一并丢掉
+            while True:
+                try:
+                    self.results.get_nowait()
+                except queue.Empty:
+                    break
+        self.log("取词 %s" % ("开启" if self.enabled else "关闭"))
 
     def _pump(self):
-        """主线程: 消费取词结果。"""
+        """主线程: 先处理命令, 再消费取词结果。"""
+        try:
+            while True:
+                command = self.commands.get_nowait()
+                if command == "quit":
+                    self.quit()
+                    return
+                if command in ("toggle", "pause"):
+                    self._toggle()
+        except queue.Empty:
+            pass
+
+        if not self.enabled:
+            self.root.after(25, self._pump)
+            return
+
         try:
             while True:
                 text, x, y = self.results.get_nowait()
@@ -93,6 +124,7 @@ class App:
         try:
             self.watcher.stop()
         finally:
+            self.tray.stop()
             self.root.quit()
 
     def run(self):
@@ -100,6 +132,7 @@ class App:
         self.log("启动, 词条 %s, 词形 %s" % (format(stats["entries"], ","),
                                              format(stats["forms"], ",")))
         self.watcher.start()
+        self.tray.start()
         self.root.after(25, self._pump)
         self.root.mainloop()
         self.dictionary.close()

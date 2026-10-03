@@ -27,6 +27,14 @@ CARD_WIDTH = 430
 
 user32 = ctypes.windll.user32
 
+# 64 位下必须声明参数类型, 否则句柄会被当成 32 位整数截断
+user32.GetParent.restype = ctypes.c_void_p
+user32.GetParent.argtypes = [ctypes.c_void_p]
+user32.GetWindowLongW.restype = ctypes.c_long
+user32.GetWindowLongW.argtypes = [ctypes.c_void_p, ctypes.c_int]
+user32.SetWindowLongW.restype = ctypes.c_long
+user32.SetWindowLongW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_long]
+
 
 class Popup:
     def __init__(self, master, hide_after=9.0):
