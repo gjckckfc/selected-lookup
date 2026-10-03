@@ -30,6 +30,7 @@ def main():
     parser.add_argument("--word", default=HEAD, help="预览哪个词")
     parser.add_argument("--opacity", type=int, help="临时覆盖不透明度, 单位百分比")
     parser.add_argument("--radius", type=int, help="临时覆盖圆角半径, 单位像素")
+    parser.add_argument("--hover", type=int, help="把第几个单词块显示成悬停高亮(从 0 数)")
     args = parser.parse_args()
 
     settings = Settings(ROOT / "settings.json")
@@ -51,6 +52,21 @@ def main():
     )
     result = dictionary.lookup(args.word)
     popup.show(result, 420, 320)
+
+    if args.hover is not None:
+        found = []
+
+        def walk(widget):
+            if getattr(widget, "_is_block", False):
+                found.append(widget)
+            for child in widget.winfo_children():
+                walk(child)
+
+        walk(popup.card)
+        if 0 <= args.hover < len(found):
+            popup._block_enter(found[args.hover])
+            root.update()
+            print("已把第 %d 个单词块置为悬停高亮" % args.hover)
 
     if args.settings:
         window = SettingsWindow(root, settings, on_change=lambda key, value: None)

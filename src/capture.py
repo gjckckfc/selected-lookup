@@ -91,11 +91,20 @@ kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
 # 剪贴板
 # --------------------------------------------------------------------------
 
+def _open_clipboard(retries=6, delay=0.03):
+    """打开剪贴板。别的进程可能正占着, 所以要重试几次。"""
+    for _ in range(retries):
+        if user32.OpenClipboard(None):
+            return True
+        time.sleep(delay)
+    return False
+
+
 def read_clipboard_text():
     """读剪贴板里的文本；没有文本返回 None。"""
     if not user32.IsClipboardFormatAvailable(CF_UNICODETEXT):
         return None
-    if not user32.OpenClipboard(None):
+    if not _open_clipboard():
         return None
     try:
         handle = user32.GetClipboardData(CF_UNICODETEXT)
@@ -114,7 +123,7 @@ def read_clipboard_text():
 
 def write_clipboard_text(text):
     """把文本写回剪贴板。"""
-    if not user32.OpenClipboard(None):
+    if not _open_clipboard():
         return False
     try:
         user32.EmptyClipboard()

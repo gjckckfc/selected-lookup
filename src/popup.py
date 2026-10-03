@@ -1,15 +1,16 @@
 # -*- coding: utf-8 -*-
-"""贴边浮窗: 显示查词结果, 可以拖动, 可以一键复制。
+"""贴边浮窗: 显示查词结果。
 
 外观:
   - 圆角: CreateRoundRectRgn + SetWindowRgn
   - 半透明: WS_EX_LAYERED + SetLayeredWindowAttributes, 默认 88%
-  - 鼠标移上去自动变完全不透明, 移开恢复
+  - 鼠标移上去自动变完全不透明, 移开恢复; 停在上面时不自动收起
 
 交互:
-  - WS_EX_NOACTIVATE 保证不抢焦点, 不影响你正在打字的窗口
-  - 可以按住拖走; 拖动期间由 capture.py 的忽略区域让全局钩子不插手
-  - 悬停时不自动收起
+  - WS_EX_NOACTIVATE 不抢焦点, 不影响你正在打字的窗口
+  - 每个"单词块"(词 + 它的释义)鼠标移上去会高亮, 点一下复制这一块
+  - 右上角「复制全部」复制整条词条
+  - 按住任意位置可以拖动浮窗; 拖动与点击靠位移区分
 """
 from __future__ import annotations
 
@@ -33,12 +34,17 @@ TAG_FG = "#ffcf6b"
 BODY_FG = "#e3eaf4"
 NOTE_FG = "#96a2b5"
 
+BLOCK_HOVER = "#2b374b"
+BLOCK_COPIED = "#2c4a3c"
+
 BUTTON_BG = "#2c3648"
 BUTTON_FG = "#c9d6ea"
 BUTTON_ACTIVE = "#3b4a63"
 
 FONT_FAMILY = "Microsoft YaHei UI"
 CARD_WIDTH = 430
+DRAG_SLOP = 4          # 松开时位移小于这个值算"点击", 否则算"拖动"
+MAX_DEF_LINES = 3      # 每个单词块最多显示几行释义
 
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
@@ -74,6 +80,11 @@ class Popup:
         self._hovering = False
         self._hwnd = None
         self._drag_offset = None
+        self._press = None
+        self._moved = False
+        self._hover_block = None
+        self._leave_timer = None
+        self._flash_timer = None
         self._clipboard_text = ""
         self._copy_btn = None
         self._copy_timer = None
@@ -109,7 +120,6 @@ class Popup:
         user32.SetLayeredWindowAttributes(self._hwnd, 0, alpha, LWA_ALPHA)
 
     def _apply_round_region(self, width, height):
-        """把窗口裁成圆角。半径 0 时恢复成矩形。"""
         if not self._hwnd:
             return
         if self.radius <= 0:
@@ -123,7 +133,6 @@ class Popup:
 
     def apply_settings(self, radius=None, opacity=None, hide_after=None,
                        hover_opaque=None):
-        """设置面板改了值以后即时生效。"""
         if radius is not None:
             self.radius = radius
         if opacity is not None:
@@ -142,30 +151,117 @@ class Popup:
         self._apply_round_region(width, height)
 
     # ------------------------------------------------------------------
-    # 拖动
+    # 交互: 拖动 / 悬停高亮 / 点击复制
     # ------------------------------------------------------------------
 
-    def _bind_drag(self, widget):
-        widget.bind("<Button-1>", self._on_drag_start)
-        widget.bind("<B1-Motion>", self._on_drag_move)
+    @staticmethod
+    def _set_bg(widget, color):
+        try:
+            widget.configure(bg=color)
+        except tk.TclError:
+            return
         for child in widget.winfo_children():
             if isinstance(child, tk.Button):
                 continue
-            self._bind_drag(child)
+            Popup._set_bg(child, color)
 
-    def _on_drag_start(self, event):
+    @staticmethod
+    def _block_of(widget):
+        while widget is not None:
+            if getattr(widget, "_is_block", False):
+                return widget
+            widget = getattr(widget, "master", None)
+        return None
+
+    @staticmethod
+    def _alive(widget):
+        try:
+            return widget is not None and bool(widget.winfo_exists())
+        except tk.TclError:
+            return False
+
+    def _bind_interactive(self, widget):
+        widget.bind("<Button-1>", self._on_press)
+        widget.bind("<B1-Motion>", self._on_drag_move)
+        widget.bind("<ButtonRelease-1>", self._on_release)
+        if getattr(widget, "_is_block", False):
+            widget.bind("<Enter>", lambda event, b=widget: self._block_enter(b))
+            widget.bind("<Leave>", lambda event, b=widget: self._block_leave(b))
+        for child in widget.winfo_children():
+            if isinstance(child, tk.Button):
+                continue
+            self._bind_interactive(child)
+
+    def _on_press(self, event):
+        self._press = (event.x_root, event.y_root)
+        self._moved = False
         self._drag_offset = (event.x_root - self.win.winfo_x(),
                              event.y_root - self.win.winfo_y())
 
     def _on_drag_move(self, event):
-        if not self._drag_offset:
+        if not self._drag_offset or not self._press:
             return
-        x = event.x_root - self._drag_offset[0]
-        y = event.y_root - self._drag_offset[1]
-        self.win.geometry("+%d+%d" % (x, y))
-        if self.on_geometry:
-            self.on_geometry()
+        if not self._moved:
+            if (abs(event.x_root - self._press[0]) > DRAG_SLOP
+                    or abs(event.y_root - self._press[1]) > DRAG_SLOP):
+                self._moved = True
+        if self._moved:
+            self.win.geometry("+%d+%d" % (event.x_root - self._drag_offset[0],
+                                          event.y_root - self._drag_offset[1]))
+            if self.on_geometry:
+                self.on_geometry()
 
+    def _on_release(self, event):
+        moved = self._moved
+        widget = event.widget
+        self._press = None
+        self._moved = False
+        self._drag_offset = None
+        if moved:
+            return
+        block = self._block_of(widget)
+        if block is not None:
+            text = getattr(block, "_copy_text", "")
+            if text:
+                self._copy(text)
+                self._flash(block)
+
+    def _block_enter(self, block):
+        if self._leave_timer:
+            self.master.after_cancel(self._leave_timer)
+            self._leave_timer = None
+        if self._hover_block is not block:
+            if self._alive(self._hover_block):
+                self._set_bg(self._hover_block, CARD_BG)
+            self._hover_block = block
+            self._set_bg(block, BLOCK_HOVER)
+
+    def _block_leave(self, block):
+        if self._leave_timer:
+            self.master.after_cancel(self._leave_timer)
+        # 延迟一点点: 鼠标从块挪到块内子控件时也会触发 Leave, 别闪
+        self._leave_timer = self.master.after(70, lambda: self._do_leave(block))
+
+    def _do_leave(self, block):
+        self._leave_timer = None
+        if self._hover_block is block:
+            self._hover_block = None
+            if self._alive(block):
+                self._set_bg(block, CARD_BG)
+
+    def _flash(self, block):
+        self._set_bg(block, BLOCK_COPIED)
+        if self._flash_timer:
+            self.master.after_cancel(self._flash_timer)
+        self._flash_timer = self.master.after(420, lambda: self._unflash(block))
+
+    def _unflash(self, block):
+        self._flash_timer = None
+        if not self._alive(block):
+            return
+        self._set_bg(block, BLOCK_HOVER if block is self._hover_block else CARD_BG)
+
+    # ------------------------------------------------------------------
     def rect(self):
         """当前窗口占据的屏幕矩形; 不可见时返回 None。"""
         if not self.win.winfo_viewable():
@@ -180,55 +276,76 @@ class Popup:
 
     def _clear(self):
         self._copy_btn = None
+        self._hover_block = None
         for child in self.card.winfo_children():
             child.destroy()
 
     def _label(self, parent, text, fg, size=10, bold=False, pady=0, wraplength=None):
-        label = tk.Label(
-            parent,
-            text=text,
-            bg=CARD_BG,
-            fg=fg,
-            justify="left",
-            anchor="w",
-            wraplength=wraplength or (CARD_WIDTH - 32),
-            font=(FONT_FAMILY, size, "bold" if bold else "normal"),
-        )
+        label = tk.Label(parent, text=text, bg=CARD_BG, fg=fg, justify="left",
+                         anchor="w", wraplength=wraplength or (CARD_WIDTH - 32),
+                         font=(FONT_FAMILY, size, "bold" if bold else "normal"))
         label.pack(fill="x", pady=pady)
         return label
 
-    def _title_with_copy(self, title):
+    def _header(self, title, subtitle=None):
         header = tk.Frame(self.card, bg=CARD_BG)
         header.pack(fill="x")
-        tk.Label(header, text=title, bg=CARD_BG, fg=TITLE_FG, justify="left",
-                 anchor="nw", wraplength=CARD_WIDTH - 118,
-                 font=(FONT_FAMILY, 12, "bold")).pack(side="left", anchor="nw")
-        button = tk.Button(
-            header, text="复制", command=self._copy,
-            bg=BUTTON_BG, fg=BUTTON_FG, activebackground=BUTTON_ACTIVE,
-            activeforeground=TITLE_FG, relief="flat", bd=0, highlightthickness=0,
-            font=(FONT_FAMILY, 8), padx=9, pady=2, cursor="hand2",
-        )
+        box = tk.Frame(header, bg=CARD_BG)
+        box.pack(side="left", fill="x", expand=True)
+        tk.Label(box, text=title, bg=CARD_BG, fg=TITLE_FG, justify="left", anchor="nw",
+                 wraplength=CARD_WIDTH - 118,
+                 font=(FONT_FAMILY, 12, "bold")).pack(anchor="w")
+        if subtitle:
+            tk.Label(box, text=subtitle, bg=CARD_BG, fg=NOTE_FG, justify="left",
+                     anchor="w", wraplength=CARD_WIDTH - 60,
+                     font=(FONT_FAMILY, 8)).pack(anchor="w", pady=(3, 0))
+        button = tk.Button(header, text="复制全部", command=self._copy_all,
+                           bg=BUTTON_BG, fg=BUTTON_FG, activebackground=BUTTON_ACTIVE,
+                           activeforeground=TITLE_FG, relief="flat", bd=0,
+                           highlightthickness=0, font=(FONT_FAMILY, 8),
+                           padx=9, pady=2, cursor="hand2")
         button.pack(side="right", anchor="ne", padx=(10, 0))
         self._copy_btn = button
+        return header
 
-    def _copy(self):
-        if not self._clipboard_text:
-            return
+    def _block(self, title, lines, copy_text):
+        """一个可高亮、可点击复制的"单词块"。"""
+        block = tk.Frame(self.card, bg=CARD_BG, padx=7, pady=5)
+        block.pack(fill="x", pady=(6, 0))
+        block._is_block = True
+        block._copy_text = copy_text
+        if title:
+            tk.Label(block, text=title, bg=CARD_BG, fg=PHONETIC_FG, justify="left",
+                     anchor="w", wraplength=CARD_WIDTH - 46,
+                     font=(FONT_FAMILY, 10, "bold")).pack(fill="x")
+        for index, line in enumerate(lines):
+            tk.Label(block, text=line, bg=CARD_BG, fg=BODY_FG, justify="left",
+                     anchor="w", wraplength=CARD_WIDTH - 46,
+                     font=(FONT_FAMILY, 9)).pack(fill="x",
+                                                  pady=(3 if index == 0 else 1, 0))
+        return block
+
+    # ------------------------------------------------------------------
+
+    def _copy(self, text):
         try:
-            write_clipboard_text(self._clipboard_text)
+            write_clipboard_text(text)
         except Exception:
             return
-        if self._copy_btn:
+        if self._copy_btn and self._copy_btn.winfo_exists():
             self._copy_btn.configure(text="已复制")
             if self._copy_timer:
                 self.master.after_cancel(self._copy_timer)
             self._copy_timer = self.master.after(1400, self._reset_copy_label)
 
+    def _copy_all(self):
+        if self._clipboard_text:
+            self._copy(self._clipboard_text)
+
     def _reset_copy_label(self):
         self._copy_timer = None
         if self._copy_btn and self._copy_btn.winfo_exists():
-            self._copy_btn.configure(text="复制")
+            self._copy_btn.configure(text="复制全部")
 
     @staticmethod
     def _exchange_note(exchange):
@@ -248,23 +365,20 @@ class Popup:
         self._clipboard_text = ""
 
         if result.kind == "miss":
-            self._label(self.card, result.query, TITLE_FG, size=12, bold=True)
+            self._header(result.query)
             self._label(self.card, "词典里没有这个词条", NOTE_FG, size=9, pady=(6, 0))
-            self._bind_drag(self.card)
+            self._bind_interactive(self.card)
             return
 
         if result.kind in ("word", "phrase"):
             entry = result.entry
-            head = entry.word
-            if result.matched_form and result.matched_form.lower() != entry.word.lower():
-                head = "%s  <-  %s" % (entry.word, result.matched_form)
-            title = head
+            title = entry.word
             if entry.phonetic:
                 title += "   /%s/" % entry.phonetic.strip("/")
-            self._title_with_copy(title)
+            self._header(title)
 
-            lines = ["%s  /%s/" % (entry.word, entry.phonetic.strip("/")) if entry.phonetic
-                     else entry.word]
+            all_lines = ["%s  /%s/" % (entry.word, entry.phonetic.strip("/"))
+                         if entry.phonetic else entry.word]
 
             marks = []
             if entry.tags:
@@ -274,36 +388,37 @@ class Popup:
             if entry.oxford:
                 marks.append("牛津核心")
             if marks:
-                self._label(self.card, " · ".join(marks), TAG_FG, size=9, pady=(5, 0))
-                lines.append(" · ".join(marks))
+                mark_text = " · ".join(marks)
+                self._label(self.card, mark_text, TAG_FG, size=9, pady=(5, 0))
+                all_lines.append(mark_text)
 
-            body = (entry.translation or entry.definition)[:6]
-            for index, line in enumerate(body):
-                self._label(self.card, line, BODY_FG, size=10,
-                            pady=(9 if index == 0 else 3, 0))
-                lines.append(line)
+            body = (entry.translation or entry.definition)[:MAX_DEF_LINES]
+            # 整条词条的释义区就是一个"单词块": 悬停高亮, 点击复制"词 + 释义"
+            block_text = "\n".join([all_lines[0]] + body)
+            self._block(None, body, block_text)
+            all_lines.extend(body)
 
             if entry.exchange:
                 note = self._exchange_note(entry.exchange)
                 self._label(self.card, note, NOTE_FG, size=8, pady=(9, 0))
-                lines.append(note)
+                all_lines.append(note)
 
-            self._clipboard_text = "\n".join(lines)
-            self._bind_drag(self.card)
+            self._clipboard_text = "\n".join(all_lines)
+            self._bind_interactive(self.card)
             return
 
-        # breakdown: 整串没查到, 退回逐词
-        self._title_with_copy(result.query)
-        lines = [result.query, "（整串没有词条，逐词释义）"]
-        self._label(self.card, "整串没有词条, 下面是逐词释义", NOTE_FG, size=9, pady=(5, 0))
+        # breakdown: 整串没查到, 退回逐词。每个词一个可点块
+        self._header(result.query, "整串没有词条，下面是逐词释义")
+        all_lines = ["【原文】%s" % result.query, ""]
         for entry, matched, token in result.parts:
             head = "%s -> %s" % (token, entry.word) if matched else token
-            first = (entry.translation or entry.definition or ["—"])[0]
-            self._label(self.card, head, PHONETIC_FG, size=10, bold=True, pady=(10, 0))
-            self._label(self.card, first, BODY_FG, size=9, pady=(2, 0))
-            lines.append("%s: %s" % (head, first))
-        self._clipboard_text = "\n".join(lines)
-        self._bind_drag(self.card)
+            body = (entry.translation or entry.definition)[:MAX_DEF_LINES]
+            copy_text = "\n".join([head] + body)
+            self._block(head, body, copy_text)
+            all_lines.append(copy_text)
+            all_lines.append("")
+        self._clipboard_text = "\n".join(all_lines).rstrip()
+        self._bind_interactive(self.card)
 
     # ------------------------------------------------------------------
     # 显示与隐藏
@@ -334,6 +449,8 @@ class Popup:
         self._hovering = False
         self._apply_alpha(self.opacity)
         self._drag_offset = None
+        self._press = None
+        self._moved = False
 
         self._restart_timer()
         self._schedule_hover_check()
@@ -365,22 +482,29 @@ class Popup:
             if self.hover_opaque:
                 self._apply_alpha(100 if inside else self.opacity)
         if inside:
-            # 你正在看它的时候别把它收走
             self._restart_timer()
         self._schedule_hover_check()
 
     def hide(self):
-        if self._timer:
-            self.master.after_cancel(self._timer)
-            self._timer = None
-        if self._hover_timer:
-            self.master.after_cancel(self._hover_timer)
-            self._hover_timer = None
-        if self._copy_timer:
-            self.master.after_cancel(self._copy_timer)
-            self._copy_timer = None
+        for attr in ("_timer", "_hover_timer", "_leave_timer", "_copy_timer"):
+            timer = getattr(self, attr)
+            if timer:
+                try:
+                    self.master.after_cancel(timer)
+                except Exception:
+                    pass
+                setattr(self, attr, None)
+        if self._flash_timer:
+            try:
+                self.master.after_cancel(self._flash_timer)
+            except Exception:
+                pass
+            self._flash_timer = None
         self._hovering = False
+        self._hover_block = None
         self._drag_offset = None
+        self._press = None
+        self._moved = False
         self.win.withdraw()
         if self.on_geometry:
             self.on_geometry()
