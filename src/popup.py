@@ -180,17 +180,31 @@ class Popup:
         except tk.TclError:
             return False
 
-    def _bind_interactive(self, widget):
+    def _bind_interactive(self, widget, block=None):
+        if getattr(widget, "_is_block", False):
+            block = widget
         widget.bind("<Button-1>", self._on_press)
         widget.bind("<B1-Motion>", self._on_drag_move)
         widget.bind("<ButtonRelease-1>", self._on_release)
-        if getattr(widget, "_is_block", False):
-            widget.bind("<Enter>", lambda event, b=widget: self._block_enter(b))
-            widget.bind("<Leave>", lambda event, b=widget: self._block_leave(b))
+        if block is not None:
+            # 块里的每个子控件都要绑: 鼠标从块挪到块内文字上时块也会发 Leave,
+            # 只绑块本身就会"闪一下又灭"。
+            widget.bind("<Enter>", lambda event, b=block: self._block_enter(b))
+            widget.bind("<Leave>", lambda event, b=block: self._block_leave(b))
         for child in widget.winfo_children():
             if isinstance(child, tk.Button):
                 continue
-            self._bind_interactive(child)
+            self._bind_interactive(child, block)
+
+    @staticmethod
+    def _point_in_block(block, x, y):
+        try:
+            left = block.winfo_rootx()
+            top = block.winfo_rooty()
+            return (left <= x <= left + block.winfo_width()
+                    and top <= y <= top + block.winfo_height())
+        except tk.TclError:
+            return False
 
     def _on_press(self, event):
         self._press = (event.x_root, event.y_root)
@@ -483,6 +497,15 @@ class Popup:
                 self._apply_alpha(100 if inside else self.opacity)
         if inside:
             self._restart_timer()
+        # 兜底: 万一漏掉了 Leave, 这里按坐标把高亮纠正过来
+        if self._hover_block is not None:
+            block = self._hover_block
+            if not self._alive(block):
+                self._hover_block = None
+            elif block.winfo_width() > 1 and not self._point_in_block(block, pointer_x, pointer_y):
+                # 宽度还是 1 说明布局没落定, 这时别下结论
+                self._hover_block = None
+                self._set_bg(block, CARD_BG)
         self._schedule_hover_check()
 
     def hide(self):
