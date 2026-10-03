@@ -21,9 +21,14 @@ user32 = ctypes.WinDLL("user32", use_last_error=True)
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
 WH_MOUSE_LL = 14
+WH_KEYBOARD_LL = 13
 WM_LBUTTONDOWN = 0x0201
 WM_LBUTTONUP = 0x0202
+WM_KEYDOWN = 0x0100
+WM_SYSKEYDOWN = 0x0104
 WM_HOTKEY = 0x0312
+
+VK_ESCAPE = 0x1B
 
 VK_CONTROL = 0x11
 VK_C = 0x43
@@ -46,6 +51,16 @@ class MSLLHOOKSTRUCT(ctypes.Structure):
     _fields_ = [
         ("pt", POINT),
         ("mouseData", wintypes.DWORD),
+        ("flags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+    ]
+
+
+class KBDLLHOOKSTRUCT(ctypes.Structure):
+    _fields_ = [
+        ("vkCode", wintypes.DWORD),
+        ("scanCode", wintypes.DWORD),
         ("flags", wintypes.DWORD),
         ("time", wintypes.DWORD),
         ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
@@ -158,10 +173,17 @@ def grab_selected_text(timeout=0.45):
 # --------------------------------------------------------------------------
 
 class SelectionWatcher:
-    """监听"按住左键拖动一段距离后松开"，触发取词。"""
+    """监听鼠标与键盘, 判断"现在还有没有选中文字"。
 
-    def __init__(self, on_selection, on_hotkey=None, drag_threshold=6, hotkeys=(), logger=None):
+    两种事件:
+      - 拖选一段距离后松开  -> 触发取词(显示浮窗)
+      - 不带拖动的单击 / 按 Esc -> 视为取消选中(收起浮窗)
+    """
+
+    def __init__(self, on_selection, on_dismiss=None, on_hotkey=None,
+                 drag_threshold=6, hotkeys=(), logger=None):
         self.on_selection = on_selection
+        self.on_dismiss = on_dismiss
         self.on_hotkey = on_hotkey
         self.drag_threshold = drag_threshold
         self.hotkeys = list(hotkeys)
@@ -169,10 +191,16 @@ class SelectionWatcher:
 
         self._events = queue.Queue()
         self._down_pt = None
+        self._dismiss_at = None          # 单击后延迟收起的时间点
+        self._last_down_time = 0.0
+        self._click_count = 0
+        self.double_click_window = 0.4   # 两次按下间隔小于这个值算双击
         self._proc_ref = HOOKPROC(self._hook_proc)
+        self._kb_proc_ref = HOOKPROC(self._kb_proc)
         self._thread = None
         self._thread_id = None
         self._hook = None
+        self._kb_hook = None
         self._stop = threading.Event()
         self.paused = False
 
@@ -188,6 +216,14 @@ class SelectionWatcher:
                 if w_param == WM_LBUTTONDOWN:
                     data = ctypes.cast(l_param, ctypes.POINTER(MSLLHOOKSTRUCT)).contents
                     self._down_pt = (data.pt.x, data.pt.y)
+                    # 任何一次按下都取消"待收起", 双击/三击选词才不会被误收
+                    self._dismiss_at = None
+                    now = time.monotonic()
+                    if now - self._last_down_time <= self.double_click_window:
+                        self._click_count += 1
+                    else:
+                        self._click_count = 1
+                    self._last_down_time = now
                 elif w_param == WM_LBUTTONUP:
                     data = ctypes.cast(l_param, ctypes.POINTER(MSLLHOOKSTRUCT)).contents
                     start = self._down_pt
@@ -197,8 +233,25 @@ class SelectionWatcher:
                         dy = abs(data.pt.y - start[1])
                         if dx >= self.drag_threshold or dy >= self.drag_threshold:
                             self._events.put((data.pt.x, data.pt.y))
+                        elif self._click_count >= 2:
+                            # 双击/三击也能选中词, 按取词处理
+                            self._events.put((data.pt.x, data.pt.y))
+                        else:
+                            # 普通单击 = 取消选中, 但延后一点再收, 免得误伤双击
+                            self._dismiss_at = time.monotonic() + 0.22
             except Exception as exc:  # 钩子里绝不能抛异常出去
                 self.log("hook error: %s" % exc)
+        return user32.CallNextHookEx(None, n_code, w_param, l_param)
+
+    def _kb_proc(self, n_code, w_param, l_param):
+        """只观察, 不吞按键: 按 Esc 视为取消选中。"""
+        if n_code == 0 and w_param in (WM_KEYDOWN, WM_SYSKEYDOWN):
+            try:
+                data = ctypes.cast(l_param, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
+                if data.vkCode == VK_ESCAPE and not self.paused and self.on_dismiss:
+                    self.on_dismiss()
+            except Exception as exc:
+                self.log("kb hook error: %s" % exc)
         return user32.CallNextHookEx(None, n_code, w_param, l_param)
 
     # ----- 取词线程 -----
@@ -206,19 +259,32 @@ class SelectionWatcher:
     def _work(self):
         while not self._stop.is_set():
             try:
-                x, y = self._events.get(timeout=0.2)
+                x, y = self._events.get(timeout=0.02)
             except queue.Empty:
-                continue
-            try:
-                text = grab_selected_text()
-            except Exception as exc:
-                self.log("grab error: %s" % exc)
-                continue
-            if text and text.strip():
+                x = y = None
+
+            if x is not None:
                 try:
-                    self.on_selection(text.strip(), x, y)
+                    text = grab_selected_text()
                 except Exception as exc:
-                    self.log("callback error: %s" % exc)
+                    self.log("grab error: %s" % exc)
+                    continue
+                if text and text.strip() and self.on_selection:
+                    try:
+                        self.on_selection(text.strip(), x, y)
+                    except Exception as exc:
+                        self.log("callback error: %s" % exc)
+                continue
+
+            # 单击后延迟收起: 期间若又按下鼠标(双击选词), 上面会把时间点清掉
+            deadline = self._dismiss_at
+            if deadline is not None and time.monotonic() >= deadline:
+                self._dismiss_at = None
+                if self.on_dismiss and not self.paused:
+                    try:
+                        self.on_dismiss()
+                    except Exception as exc:
+                        self.log("dismiss error: %s" % exc)
 
     # ----- 生命周期 -----
 
@@ -233,7 +299,8 @@ class SelectionWatcher:
         if not self._hook:
             self.log("SetWindowsHookExW 失败，错误码 %d" % ctypes.get_last_error())
             return
-        self.log("鼠标钩子已挂载")
+        self._kb_hook = user32.SetWindowsHookExW(WH_KEYBOARD_LL, self._kb_proc_ref, None, 0)
+        self.log("鼠标钩子已挂载，键盘钩子%s" % ("已挂载" if self._kb_hook else "挂载失败"))
 
         for index, (_mods, _vk, name) in enumerate(self.hotkeys, start=1):
             mods, vk, _ = self.hotkeys[index - 1]
@@ -252,6 +319,9 @@ class SelectionWatcher:
 
         user32.UnhookWindowsHookEx(self._hook)
         self._hook = None
+        if self._kb_hook:
+            user32.UnhookWindowsHookEx(self._kb_hook)
+            self._kb_hook = None
 
     def stop(self):
         self._stop.set()

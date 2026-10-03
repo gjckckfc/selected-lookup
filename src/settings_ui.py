@@ -67,8 +67,8 @@ class SettingsWindow:
         # ---- 浮窗外观 ----
         look = ttk.LabelFrame(self.win, text="浮窗外观", padding=12, style="Group.TLabelframe")
         look.pack(fill="x", pady=(14, 0))
-        self._scale(look, "停留时间", "hide_after", 2, 30, 1, "秒",
-                    "超时自动消失")
+        self._scale(look, "最长停留时间", "hide_after", 2, 30, 1, "秒",
+                    "取消选中会立刻收起；一直选着不动则超过这个时间收起")
         self._scale(look, "圆角半径", "corner_radius", 0, 28, 1, "px",
                     "0 = 直角，建议 12–16")
         self._scale(look, "不透明度", "opacity", 40, 100, 1, "%",

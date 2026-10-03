@@ -60,6 +60,7 @@ class App:
 
         self.watcher = SelectionWatcher(
             on_selection=self._on_selection,
+            on_dismiss=lambda: self.commands.put("hide"),
             on_hotkey=self._on_hotkey,
             drag_threshold=self.settings.get("drag_threshold"),
             hotkeys=HOTKEYS,
@@ -163,6 +164,8 @@ class App:
                     return
                 if command in ("toggle", "pause"):
                     self._toggle()
+                elif command == "hide":
+                    self.popup.hide()
                 elif command == "settings":
                     self._open_settings()
         except queue.Empty:
