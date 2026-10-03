@@ -15,6 +15,7 @@ DEFAULTS = {
     "corner_radius": 14,      # 浮窗圆角半径 (px)
     "opacity": 88,            # 浮窗不透明度 (%), 100 = 完全不透明
     "hover_opaque": True,     # 鼠标移到浮窗上时变完全不透明
+    "max_height": 520,        # 浮窗最大高度 (px), 超出用滚轮看
 }
 
 # 每项的合法范围, 越界会被夹回来
@@ -23,6 +24,7 @@ RANGES = {
     "hide_after": (2.0, 60.0),
     "corner_radius": (0, 28),
     "opacity": (40, 100),
+    "max_height": (160, 1000),
 }
 
 

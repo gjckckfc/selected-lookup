@@ -4,18 +4,23 @@
 外观:
   - 圆角: CreateRoundRectRgn + SetWindowRgn
   - 半透明: WS_EX_LAYERED + SetLayeredWindowAttributes, 默认 88%
-  - 鼠标移上去自动变完全不透明, 移开恢复; 停在上面时不自动收起
+  - 鼠标移上去变完全不透明, 移开恢复; 停在上面时不自动收起
+
+布局:
+  - 顶部标题区固定不动(词头或原文 + 复制全部按钮)
+  - 下面是内容区, 内容过多时限制最大高度并支持滚轮滚动
+  - 原文用小字号, 超过两行自动收起, 点「展开全文」看全部
 
 交互:
-  - WS_EX_NOACTIVATE 不抢焦点, 不影响你正在打字的窗口
-  - 每个"单词块"(词 + 它的释义)鼠标移上去会高亮, 点一下复制这一块
-  - 右上角「复制全部」复制整条词条
-  - 按住任意位置可以拖动浮窗; 拖动与点击靠位移区分
+  - WS_EX_NOACTIVATE 不抢焦点
+  - 每个"单词块"(词 + 释义)鼠标移上去整块高亮, 点一下复制这一块
+  - 按住任意位置拖动浮窗; 拖动与点击靠位移区分
 """
 from __future__ import annotations
 
 import ctypes
 import tkinter as tk
+import tkinter.font as tkfont
 
 from capture import write_clipboard_text
 
@@ -33,6 +38,7 @@ PHONETIC_FG = "#8fc0ee"
 TAG_FG = "#ffcf6b"
 BODY_FG = "#e3eaf4"
 NOTE_FG = "#96a2b5"
+LINK_FG = "#7fb2e5"
 
 BLOCK_HOVER = "#2b374b"
 BLOCK_COPIED = "#2c4a3c"
@@ -42,9 +48,11 @@ BUTTON_FG = "#c9d6ea"
 BUTTON_ACTIVE = "#3b4a63"
 
 FONT_FAMILY = "Microsoft YaHei UI"
-CARD_WIDTH = 430
-DRAG_SLOP = 4          # 松开时位移小于这个值算"点击", 否则算"拖动"
-MAX_DEF_LINES = 3      # 每个单词块最多显示几行释义
+CARD_WIDTH = 420
+DRAG_SLOP = 4            # 松开时位移小于这个值算"点击", 否则算"拖动"
+MAX_DEF_LINES = 3        # 每个单词块最多显示几行释义
+MAX_ORIGIN_LINES = 2     # 原文最多显示几行, 超出收起
+SCROLL_STEP = 26         # 滚轮一格滚多少像素
 
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
@@ -67,12 +75,13 @@ gdi32.CreateRoundRectRgn.argtypes = [ctypes.c_int] * 6
 
 class Popup:
     def __init__(self, master, hide_after=5.0, radius=14, opacity=88,
-                 hover_opaque=True, on_geometry=None):
+                 hover_opaque=True, max_height=460, on_geometry=None):
         self.master = master
         self.hide_after = hide_after
         self.radius = radius
         self.opacity = max(40, min(100, opacity))
         self.hover_opaque = hover_opaque
+        self.max_height = max_height
         self.on_geometry = on_geometry
 
         self._timer = None
@@ -88,6 +97,11 @@ class Popup:
         self._clipboard_text = ""
         self._copy_btn = None
         self._copy_timer = None
+        self._scrollable = False
+        self._origin_full = ""
+        self._origin_expanded = False
+
+        self._small_font = tkfont.Font(family=FONT_FAMILY, size=9)
 
         self.win = tk.Toplevel(master)
         self.win.withdraw()
@@ -97,6 +111,21 @@ class Popup:
 
         self.card = tk.Frame(self.win, bg=CARD_BG, padx=15, pady=12)
         self.card.pack(fill="both", expand=True, padx=1, pady=1)
+
+        # 标题区固定, 不跟着滚动
+        self.header_frame = tk.Frame(self.card, bg=CARD_BG)
+        self.header_frame.pack(fill="x")
+
+        # 内容区: Canvas + 内嵌 Frame, 内容超出时才能滚动
+        self.canvas = tk.Canvas(self.card, bg=CARD_BG, highlightthickness=0,
+                                bd=0, width=CARD_WIDTH, height=10,
+                                yscrollincrement=SCROLL_STEP)
+        self.canvas.pack(fill="x", pady=(0, 0))
+        self.inner = tk.Frame(self.canvas, bg=CARD_BG)
+        self.canvas_window = self.canvas.create_window((0, 0), window=self.inner,
+                                                       anchor="nw", width=CARD_WIDTH)
+        self.inner.bind("<Configure>", self._on_inner_configure)
+        self.win.bind("<MouseWheel>", self._on_wheel)
 
         self.win.update_idletasks()
         self._hwnd = user32.GetParent(self.win.winfo_id())
@@ -132,7 +161,7 @@ class Popup:
             user32.SetWindowRgn(self._hwnd, region, True)
 
     def apply_settings(self, radius=None, opacity=None, hide_after=None,
-                       hover_opaque=None):
+                       hover_opaque=None, max_height=None):
         if radius is not None:
             self.radius = radius
         if opacity is not None:
@@ -141,14 +170,40 @@ class Popup:
             self.hide_after = hide_after
         if hover_opaque is not None:
             self.hover_opaque = hover_opaque
+        if max_height is not None:
+            self.max_height = max_height
         self._hovering = False
         if not self._hwnd:
             return
-        self.win.update_idletasks()
-        self._apply_alpha(self.opacity)
+        self._layout()
         width = self.win.winfo_width() or self.win.winfo_reqwidth()
         height = self.win.winfo_height() or self.win.winfo_reqheight()
+        self._apply_alpha(self.opacity)
         self._apply_round_region(width, height)
+
+    # ------------------------------------------------------------------
+    # 滚动
+    # ------------------------------------------------------------------
+
+    def _on_inner_configure(self, _event=None):
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def _on_wheel(self, event):
+        if not self._scrollable:
+            return "break"
+        steps = int(-event.delta / 120)
+        if steps == 0:
+            steps = -1 if event.delta > 0 else 1
+        self.canvas.yview_scroll(steps, "units")
+        return "break"
+
+    def _sync_scroll_hint(self):
+        if not hasattr(self, "_subtitle_label") or self._subtitle_label is None:
+            return
+        if self._scrollable:
+            self._subtitle_label.configure(text="滚轮可查看更多内容")
+        elif self._subtitle_base:
+            self._subtitle_label.configure(text=self._subtitle_base)
 
     # ------------------------------------------------------------------
     # 交互: 拖动 / 悬停高亮 / 点击复制
@@ -180,22 +235,6 @@ class Popup:
         except tk.TclError:
             return False
 
-    def _bind_interactive(self, widget, block=None):
-        if getattr(widget, "_is_block", False):
-            block = widget
-        widget.bind("<Button-1>", self._on_press)
-        widget.bind("<B1-Motion>", self._on_drag_move)
-        widget.bind("<ButtonRelease-1>", self._on_release)
-        if block is not None:
-            # 块里的每个子控件都要绑: 鼠标从块挪到块内文字上时块也会发 Leave,
-            # 只绑块本身就会"闪一下又灭"。
-            widget.bind("<Enter>", lambda event, b=block: self._block_enter(b))
-            widget.bind("<Leave>", lambda event, b=block: self._block_leave(b))
-        for child in widget.winfo_children():
-            if isinstance(child, tk.Button):
-                continue
-            self._bind_interactive(child, block)
-
     @staticmethod
     def _point_in_block(block, x, y):
         try:
@@ -205,6 +244,22 @@ class Popup:
                     and top <= y <= top + block.winfo_height())
         except tk.TclError:
             return False
+
+    def _bind_interactive(self, widget, block=None):
+        if getattr(widget, "_is_block", False):
+            block = widget
+        widget.bind("<Button-1>", self._on_press)
+        widget.bind("<B1-Motion>", self._on_drag_move)
+        widget.bind("<ButtonRelease-1>", self._on_release)
+        if block is not None:
+            # 块里每个子控件都要绑: 鼠标从块挪到块内文字上时块也会发 Leave,
+            # 只绑块本身就会"闪一下又灭"。
+            widget.bind("<Enter>", lambda event, b=block: self._block_enter(b))
+            widget.bind("<Leave>", lambda event, b=block: self._block_leave(b))
+        for child in widget.winfo_children():
+            if isinstance(child, tk.Button):
+                continue
+            self._bind_interactive(child, block)
 
     def _on_press(self, event):
         self._press = (event.x_root, event.y_root)
@@ -276,6 +331,7 @@ class Popup:
         self._set_bg(block, BLOCK_HOVER if block is self._hover_block else CARD_BG)
 
     # ------------------------------------------------------------------
+
     def rect(self):
         """当前窗口占据的屏幕矩形; 不可见时返回 None。"""
         if not self.win.winfo_viewable():
@@ -290,51 +346,145 @@ class Popup:
 
     def _clear(self):
         self._copy_btn = None
+        self._subtitle_label = None
         self._hover_block = None
-        for child in self.card.winfo_children():
-            child.destroy()
+        for parent in (self.header_frame, self.inner):
+            for child in parent.winfo_children():
+                child.destroy()
 
     def _label(self, parent, text, fg, size=10, bold=False, pady=0, wraplength=None):
         label = tk.Label(parent, text=text, bg=CARD_BG, fg=fg, justify="left",
-                         anchor="w", wraplength=wraplength or (CARD_WIDTH - 32),
+                         anchor="w", wraplength=wraplength or (CARD_WIDTH - 24),
                          font=(FONT_FAMILY, size, "bold" if bold else "normal"))
         label.pack(fill="x", pady=pady)
         return label
 
-    def _header(self, title, subtitle=None):
-        header = tk.Frame(self.card, bg=CARD_BG)
-        header.pack(fill="x")
-        box = tk.Frame(header, bg=CARD_BG)
+    def _header(self, title, subtitle=None, small_title=False):
+        box = tk.Frame(self.header_frame, bg=CARD_BG)
         box.pack(side="left", fill="x", expand=True)
-        tk.Label(box, text=title, bg=CARD_BG, fg=TITLE_FG, justify="left", anchor="nw",
-                 wraplength=CARD_WIDTH - 118,
-                 font=(FONT_FAMILY, 12, "bold")).pack(anchor="w")
+        self._header_box = box
+        self._title_label = tk.Label(
+            box, text=title, bg=CARD_BG, fg=TITLE_FG, justify="left", anchor="nw",
+            wraplength=CARD_WIDTH - 108,
+            font=(FONT_FAMILY, 9 if small_title else 12, "normal" if small_title else "bold"))
+        self._title_label.pack(anchor="w")
+        self._subtitle_base = subtitle or ""
+        self._subtitle_label = tk.Label(box, text=self._subtitle_base, bg=CARD_BG,
+                                        fg=NOTE_FG, justify="left", anchor="w",
+                                        wraplength=CARD_WIDTH - 24,
+                                        font=(FONT_FAMILY, 8))
         if subtitle:
-            tk.Label(box, text=subtitle, bg=CARD_BG, fg=NOTE_FG, justify="left",
-                     anchor="w", wraplength=CARD_WIDTH - 60,
-                     font=(FONT_FAMILY, 8)).pack(anchor="w", pady=(3, 0))
-        button = tk.Button(header, text="复制全部", command=self._copy_all,
+            self._subtitle_label.pack(anchor="w", pady=(3, 0))
+        button = tk.Button(self.header_frame, text="复制全部", command=self._copy_all,
                            bg=BUTTON_BG, fg=BUTTON_FG, activebackground=BUTTON_ACTIVE,
                            activeforeground=TITLE_FG, relief="flat", bd=0,
                            highlightthickness=0, font=(FONT_FAMILY, 8),
                            padx=9, pady=2, cursor="hand2")
         button.pack(side="right", anchor="ne", padx=(10, 0))
         self._copy_btn = button
-        return header
 
-    def _block(self, title, lines, copy_text):
-        """一个可高亮、可点击复制的"单词块"。"""
-        block = tk.Frame(self.card, bg=CARD_BG, padx=7, pady=5)
+    # ---- 原文区: 小字号 + 超行收起 ----
+
+    def _wrap_lines(self, text, font, max_px):
+        """按像素宽度手工折行, 这样才能准确知道有几行。"""
+        lines = []
+        current = ""
+        for word in text.split():
+            trial = (current + " " + word).strip()
+            if not current or font.measure(trial) <= max_px:
+                current = trial
+            else:
+                lines.append(current)
+                current = word
+        if current:
+            lines.append(current)
+        return lines or [""]
+
+    def _origin_area(self, text):
+        self._origin_full = text
+        self._origin_expanded = False
+        holder = tk.Frame(self._header_box, bg=CARD_BG)
+        holder.pack(anchor="w", fill="x", pady=(4, 0))
+        label = tk.Label(holder, text="", bg=CARD_BG, fg=NOTE_FG, justify="left",
+                         anchor="w", wraplength=CARD_WIDTH - 108,
+                         font=(FONT_FAMILY, 9))
+        label.pack(anchor="w")
+        link = tk.Label(holder, text="展开全文", bg=CARD_BG, fg=LINK_FG,
+                        font=(FONT_FAMILY, 8), cursor="hand2")
+        self._origin_holder = holder
+        self._origin_label = label
+        self._origin_link = link
+        # 原文本身也当做一个可点块: 悬停高亮, 点击复制整段原文
+        label._is_block = True
+        label._copy_text = text
+        link.bind("<Button-1>", lambda event: self._toggle_origin())
+        self._apply_origin()
+
+    def _apply_origin(self):
+        text = self._origin_full
+        if self._origin_expanded:
+            self._origin_label.configure(text=text)
+            self._origin_link.configure(text="收起")
+            self._origin_link.pack(anchor="w", pady=(2, 0))
+            return
+        lines = self._wrap_lines(text, self._small_font, CARD_WIDTH - 120)
+        if len(lines) > MAX_ORIGIN_LINES:
+            shown = "\n".join(lines[:MAX_ORIGIN_LINES]) + " …"
+            self._origin_label.configure(text=shown)
+            self._origin_link.configure(text="展开全文")
+            self._origin_link.pack(anchor="w", pady=(2, 0))
+        else:
+            self._origin_label.configure(text="\n".join(lines))
+            self._origin_link.pack_forget()
+
+    def _toggle_origin(self):
+        self._origin_expanded = not self._origin_expanded
+        self._apply_origin()
+        self._resize_in_place()
+
+    def _sync_scroll_state(self):
+        """按窗口真实落地后的尺寸, 判断到底需不需要滚动。"""
+        self.win.update_idletasks()
+        content_h = self.inner.winfo_reqheight()
+        # 用"请求高度"而不是"实际高度": 刚改完几何时实际高度还没刷新, 会误判
+        actual = self.canvas.winfo_reqheight()
+        self._scrollable = content_h > actual + 1
+        if not self._scrollable:
+            self.canvas.yview_moveto(0)
+        self._on_inner_configure()
+        self._sync_scroll_hint()
+
+    def _resize_in_place(self):
+        """标题区或内容变了以后, 就地重新算一次窗口大小。"""
+        self._layout()
+        self.win.update_idletasks()
+        width = self.win.winfo_reqwidth()
+        height = self.win.winfo_reqheight()
+        x = self.win.winfo_x()
+        y = self.win.winfo_y()
+        screen_h = self.win.winfo_screenheight()
+        if y + height > screen_h - 8:
+            y = max(8, screen_h - height - 8)
+        self.win.geometry("%dx%d+%d+%d" % (width, height, x, y))
+        self._apply_round_region(width, height)
+        self._sync_scroll_state()
+        if self.on_geometry:
+            self.on_geometry()
+
+    # ---- 单词块 ----
+
+    def _block(self, parent, title, lines, copy_text):
+        block = tk.Frame(parent, bg=CARD_BG, padx=7, pady=5)
         block.pack(fill="x", pady=(6, 0))
         block._is_block = True
         block._copy_text = copy_text
         if title:
             tk.Label(block, text=title, bg=CARD_BG, fg=PHONETIC_FG, justify="left",
-                     anchor="w", wraplength=CARD_WIDTH - 46,
+                     anchor="w", wraplength=CARD_WIDTH - 34,
                      font=(FONT_FAMILY, 10, "bold")).pack(fill="x")
         for index, line in enumerate(lines):
             tk.Label(block, text=line, bg=CARD_BG, fg=BODY_FG, justify="left",
-                     anchor="w", wraplength=CARD_WIDTH - 46,
+                     anchor="w", wraplength=CARD_WIDTH - 34,
                      font=(FONT_FAMILY, 9)).pack(fill="x",
                                                   pady=(3 if index == 0 else 1, 0))
         return block
@@ -380,8 +530,9 @@ class Popup:
 
         if result.kind == "miss":
             self._header(result.query)
-            self._label(self.card, "词典里没有这个词条", NOTE_FG, size=9, pady=(6, 0))
-            self._bind_interactive(self.card)
+            self._label(self.inner, "词典里没有这个词条", NOTE_FG, size=9, pady=(6, 0))
+            self._bind_interactive(self.header_frame)
+            self._bind_interactive(self.inner)
             return
 
         if result.kind in ("word", "phrase"):
@@ -393,7 +544,6 @@ class Popup:
 
             all_lines = ["%s  /%s/" % (entry.word, entry.phonetic.strip("/"))
                          if entry.phonetic else entry.word]
-
             marks = []
             if entry.tags:
                 marks.append("、".join(entry.tags))
@@ -403,44 +553,63 @@ class Popup:
                 marks.append("牛津核心")
             if marks:
                 mark_text = " · ".join(marks)
-                self._label(self.card, mark_text, TAG_FG, size=9, pady=(5, 0))
+                self._label(self.inner, mark_text, TAG_FG, size=9, pady=(0, 0))
                 all_lines.append(mark_text)
 
             body = (entry.translation or entry.definition)[:MAX_DEF_LINES]
-            # 整条词条的释义区就是一个"单词块": 悬停高亮, 点击复制"词 + 释义"
             block_text = "\n".join([all_lines[0]] + body)
-            self._block(None, body, block_text)
+            self._block(self.inner, None, body, block_text)
             all_lines.extend(body)
 
             if entry.exchange:
                 note = self._exchange_note(entry.exchange)
-                self._label(self.card, note, NOTE_FG, size=8, pady=(9, 0))
+                self._label(self.inner, note, NOTE_FG, size=8, pady=(9, 0))
                 all_lines.append(note)
 
             self._clipboard_text = "\n".join(all_lines)
-            self._bind_interactive(self.card)
+            self._bind_interactive(self.header_frame)
+            self._bind_interactive(self.inner)
             return
 
-        # breakdown: 整串没查到, 退回逐词。每个词一个可点块
-        self._header(result.query, "整串没有词条，下面是逐词释义")
+        # breakdown: 整串没查到, 退回逐词
+        self._header("逐词释义", "整串没有词条，下面按词拆开")
+        self._origin_area(result.query)
         all_lines = ["【原文】%s" % result.query, ""]
         for entry, matched, token in result.parts:
             head = "%s -> %s" % (token, entry.word) if matched else token
             body = (entry.translation or entry.definition)[:MAX_DEF_LINES]
             copy_text = "\n".join([head] + body)
-            self._block(head, body, copy_text)
+            self._block(self.inner, head, body, copy_text)
             all_lines.append(copy_text)
             all_lines.append("")
         self._clipboard_text = "\n".join(all_lines).rstrip()
-        self._bind_interactive(self.card)
+        self._bind_interactive(self.header_frame)
+        self._bind_interactive(self.inner)
 
     # ------------------------------------------------------------------
-    # 显示与隐藏
+    # 布局与显示
     # ------------------------------------------------------------------
+
+    def _layout(self):
+        """按内容算出窗口大小; 整窗高度不超过 max_height, 超出就打开滚动。"""
+        self.win.update_idletasks()
+        self.inner.update_idletasks()
+        content_h = self.inner.winfo_reqheight()
+
+        # 先量出"除内容区以外"的固定高度(边框 + 内边距 + 标题区)
+        self.canvas.configure(height=1)
+        self.win.update_idletasks()
+        chrome = max(self.win.winfo_reqheight() - 1, 0)
+
+        visible = min(content_h, max(self.max_height - chrome, 40))
+        self.canvas.configure(height=max(visible, 1))
+        self.canvas.itemconfigure(self.canvas_window, width=CARD_WIDTH)
+        self.win.update_idletasks()
 
     def show(self, result, x, y):
         self._render(result)
-        self.win.update_idletasks()
+        self._layout()
+        self.canvas.yview_moveto(0)
 
         width = self.win.winfo_reqwidth()
         height = self.win.winfo_reqheight()
@@ -454,6 +623,8 @@ class Popup:
             pos_x = max(8, screen_w - width - 8)
         if pos_y + height > screen_h - 8:
             pos_y = max(8, y - height - 12)
+        if pos_y < 8:
+            pos_y = 8
 
         self.win.geometry("%dx%d+%d+%d" % (width, height, pos_x, pos_y))
         self.win.deiconify()
@@ -465,6 +636,7 @@ class Popup:
         self._drag_offset = None
         self._press = None
         self._moved = False
+        self._sync_scroll_state()
 
         self._restart_timer()
         self._schedule_hover_check()
@@ -509,7 +681,8 @@ class Popup:
         self._schedule_hover_check()
 
     def hide(self):
-        for attr in ("_timer", "_hover_timer", "_leave_timer", "_copy_timer"):
+        for attr in ("_timer", "_hover_timer", "_leave_timer", "_copy_timer",
+                     "_flash_timer"):
             timer = getattr(self, attr)
             if timer:
                 try:
@@ -517,12 +690,6 @@ class Popup:
                 except Exception:
                     pass
                 setattr(self, attr, None)
-        if self._flash_timer:
-            try:
-                self.master.after_cancel(self._flash_timer)
-            except Exception:
-                pass
-            self._flash_timer = None
         self._hovering = False
         self._hover_block = None
         self._drag_offset = None

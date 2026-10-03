@@ -22,6 +22,9 @@ from settings import Settings  # noqa: E402
 from settings_ui import SettingsWindow  # noqa: E402
 
 HEAD = "inflation"
+LONG_SAMPLE = ("the aggregate demand curve shifts when any component of planned "
+               "spending changes, including consumption, investment, government "
+               "purchases and net exports")
 
 
 def main():
@@ -31,6 +34,7 @@ def main():
     parser.add_argument("--opacity", type=int, help="临时覆盖不透明度, 单位百分比")
     parser.add_argument("--radius", type=int, help="临时覆盖圆角半径, 单位像素")
     parser.add_argument("--hover", type=int, help="把第几个单词块显示成悬停高亮(从 0 数)")
+    parser.add_argument("--long", action="store_true", help="用一长段英文原文来预览")
     args = parser.parse_args()
 
     settings = Settings(ROOT / "settings.json")
@@ -49,8 +53,9 @@ def main():
         radius=settings.get("corner_radius"),
         opacity=settings.get("opacity"),
         hover_opaque=settings.get("hover_opaque"),
+        max_height=settings.get("max_height"),
     )
-    result = dictionary.lookup(args.word)
+    result = dictionary.lookup(LONG_SAMPLE if args.long else args.word)
     popup.show(result, 420, 320)
 
     if args.hover is not None:

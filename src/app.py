@@ -53,6 +53,7 @@ class App:
             radius=self.settings.get("corner_radius"),
             opacity=self.settings.get("opacity"),
             hover_opaque=self.settings.get("hover_opaque"),
+            max_height=self.settings.get("max_height"),
             on_geometry=self._sync_popup_rect,
         )
         self.results = queue.Queue()
@@ -134,12 +135,14 @@ class App:
             return
         if key == "drag_threshold":
             self.watcher.drag_threshold = value
-        elif key in ("hide_after", "corner_radius", "opacity", "hover_opaque"):
+        elif key in ("hide_after", "corner_radius", "opacity", "hover_opaque",
+                     "max_height"):
             self.popup.apply_settings(
                 hide_after=self.settings.get("hide_after"),
                 radius=self.settings.get("corner_radius"),
                 opacity=self.settings.get("opacity"),
                 hover_opaque=self.settings.get("hover_opaque"),
+                max_height=self.settings.get("max_height"),
             )
         self.log("设置 %s = %s" % (key, value))
 
@@ -150,6 +153,7 @@ class App:
             radius=self.settings.get("corner_radius"),
             opacity=self.settings.get("opacity"),
             hover_opaque=self.settings.get("hover_opaque"),
+            max_height=self.settings.get("max_height"),
         )
         want = bool(self.settings.get("enabled"))
         if want != self.enabled:
