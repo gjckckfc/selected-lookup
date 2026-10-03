@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""把鼠标钩子、词典、浮窗串起来。
+"""把鼠标钩子、词典、浮窗、托盘、设置面板串起来。
 
 线程模型:
-  - 主线程: tkinter 事件循环(浮窗) + 每 25ms 轮询结果队列
+  - 主线程: tkinter 事件循环(浮窗 + 设置窗) + 每 25ms 轮询命令与结果队列
   - 钩子线程: 底层鼠标钩子 + 热键消息循环
   - 取词线程: 真正做 Ctrl+C 和读剪贴板(慢活)
+  - 托盘线程: Shell_NotifyIcon 的消息循环
+
+所有跨线程动作都只往命令队列里放一个字符串, 由主线程执行,
+避免在非主线程里碰 tkinter。
 """
 from __future__ import annotations
 
@@ -19,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from capture import MOD_ALT, MOD_CONTROL, SelectionWatcher  # noqa: E402
 from dictionary import Dictionary  # noqa: E402
 from popup import Popup  # noqa: E402
+from settings_ui import SettingsWindow  # noqa: E402
 from tray import TrayIcon  # noqa: E402
 
 HOTKEYS = [
@@ -28,28 +33,51 @@ HOTKEYS = [
 
 
 class App:
-    def __init__(self, db_path, index_path=None, drag_threshold=6,
-                 hide_after=9.0, log_path=None):
+    def __init__(self, db_path, index_path=None, settings=None, log_path=None):
         self.log_path = Path(log_path) if log_path else None
+        self.settings_path = Path(settings) if settings else None
+        if self.settings_path:
+            from settings import Settings
+            self.settings = Settings(self.settings_path)
+        else:
+            from settings import Settings
+            self.settings = Settings(Path(__file__).resolve().parent.parent / "settings.json")
+
         self.dictionary = Dictionary(db_path, index_path)
         self.root = tk.Tk()
         self.root.withdraw()
-        self.popup = Popup(self.root, hide_after=hide_after)
+
+        self.popup = Popup(
+            self.root,
+            hide_after=self.settings.get("hide_after"),
+            radius=self.settings.get("corner_radius"),
+            opacity=self.settings.get("opacity"),
+            hover_opaque=self.settings.get("hover_opaque"),
+        )
         self.results = queue.Queue()
         self.commands = queue.Queue()
-        self.enabled = True
+        self.enabled = bool(self.settings.get("enabled"))
+
         self.watcher = SelectionWatcher(
             on_selection=self._on_selection,
             on_hotkey=self._on_hotkey,
-            drag_threshold=drag_threshold,
+            drag_threshold=self.settings.get("drag_threshold"),
             hotkeys=HOTKEYS,
             logger=self.log,
         )
+        self.watcher.paused = not self.enabled
+
         self.tray = TrayIcon(
-            enabled=True,
+            enabled=self.enabled,
             on_toggle=lambda: self.commands.put("toggle"),
+            on_settings=lambda: self.commands.put("settings"),
             on_quit=lambda: self.commands.put("quit"),
             logger=self.log,
+        )
+        self.settings_window = SettingsWindow(
+            self.root, self.settings,
+            on_change=self._on_setting_changed,
+            on_reset=self._apply_all_settings,
         )
 
     def log(self, message):
@@ -62,32 +90,68 @@ class App:
             except OSError:
                 pass
 
+    # ------------------------------------------------------------------
+    # 各线程统一往命令队列投递, 由主线程执行
+    # ------------------------------------------------------------------
+
     def _on_selection(self, text, x, y):
-        """在取词线程里被调用, 只投递, 不碰界面。"""
         self.results.put((text, x, y))
 
     def _on_hotkey(self, name):
-        """在钩子线程里被调用。只投递命令, 不碰界面。
-
-        以前这里直接调 root.after, 那是跨线程操作 tkinter, 会偶发失效。
-        """
         self.commands.put(name)
 
+    # ------------------------------------------------------------------
+
     def _toggle(self):
-        """在主线程里执行开关切换。"""
         self.enabled = not self.enabled
+        self.settings.set("enabled", self.enabled)
         self.watcher.paused = not self.enabled
         self.tray.set_enabled(self.enabled)
-
         if not self.enabled:
             self.popup.hide()
-            # 关掉的瞬间, 队列里可能还排着刚抓到的结果, 一并丢掉
             while True:
                 try:
                     self.results.get_nowait()
                 except queue.Empty:
                     break
+        if self.settings_window:
+            self.settings_window.refresh()
         self.log("取词 %s" % ("开启" if self.enabled else "关闭"))
+
+    def _on_setting_changed(self, key, value):
+        """设置面板里任何一项改动都会走到这里, 立即生效。"""
+        if key == "enabled":
+            if bool(value) != self.enabled:
+                self._toggle()
+            return
+        if key == "drag_threshold":
+            self.watcher.drag_threshold = value
+        elif key in ("hide_after", "corner_radius", "opacity", "hover_opaque"):
+            self.popup.apply_settings(
+                hide_after=self.settings.get("hide_after"),
+                radius=self.settings.get("corner_radius"),
+                opacity=self.settings.get("opacity"),
+                hover_opaque=self.settings.get("hover_opaque"),
+            )
+        self.log("设置 %s = %s" % (key, value))
+
+    def _apply_all_settings(self):
+        self.watcher.drag_threshold = self.settings.get("drag_threshold")
+        self.popup.apply_settings(
+            hide_after=self.settings.get("hide_after"),
+            radius=self.settings.get("corner_radius"),
+            opacity=self.settings.get("opacity"),
+            hover_opaque=self.settings.get("hover_opaque"),
+        )
+        want = bool(self.settings.get("enabled"))
+        if want != self.enabled:
+            self._toggle()
+        self.log("已恢复默认设置")
+
+    def _open_settings(self):
+        self.settings_window.open()
+
+    # ------------------------------------------------------------------
 
     def _pump(self):
         """主线程: 先处理命令, 再消费取词结果。"""
@@ -99,6 +163,8 @@ class App:
                     return
                 if command in ("toggle", "pause"):
                     self._toggle()
+                elif command == "settings":
+                    self._open_settings()
         except queue.Empty:
             pass
 
@@ -129,8 +195,9 @@ class App:
 
     def run(self):
         stats = self.dictionary.stats()
-        self.log("启动, 词条 %s, 词形 %s" % (format(stats["entries"], ","),
-                                             format(stats["forms"], ",")))
+        self.log("启动, 词条 %s, 词形 %s, 设置 %s" % (
+            format(stats["entries"], ","), format(stats["forms"], ","),
+            self.settings_path or "(默认)"))
         self.watcher.start()
         self.tray.start()
         self.root.after(25, self._pump)

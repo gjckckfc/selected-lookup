@@ -40,6 +40,7 @@ TPM_RIGHTBUTTON = 0x0002
 TPM_RETURNCMD = 0x0100
 
 ID_TOGGLE = 1001
+ID_SETTINGS = 1003
 ID_QUIT = 1002
 
 CALLBACK_MESSAGE = WM_APP + 1
@@ -155,10 +156,11 @@ class TrayIcon:
     """托盘图标。左键单击 / 双击切换开关, 右键出菜单。"""
 
     def __init__(self, enabled=True, on_toggle=None, on_quit=None,
-                 tip="选中即查", logger=None):
+                 on_settings=None, tip="选中即查", logger=None):
         self.enabled = enabled
         self.on_toggle = on_toggle
         self.on_quit = on_quit
+        self.on_settings = on_settings
         self.tip = tip
         self.log = logger or (lambda message: None)
 
@@ -203,6 +205,8 @@ class TrayIcon:
         flags = MF_STRING | (MF_CHECKED if self.enabled else 0)
         user32.AppendMenuW(menu, flags, ID_TOGGLE, "启用取词")
         user32.AppendMenuW(menu, MF_SEPARATOR, 0, None)
+        user32.AppendMenuW(menu, MF_STRING, ID_SETTINGS, "设置...")
+        user32.AppendMenuW(menu, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(menu, MF_STRING, ID_QUIT, "退出")
 
         point = wintypes.POINT()
@@ -216,6 +220,12 @@ class TrayIcon:
 
         if choice == ID_TOGGLE:
             self._fire_toggle()
+        elif choice == ID_SETTINGS:
+            if self.on_settings:
+                try:
+                    self.on_settings()
+                except Exception as exc:
+                    self.log("tray settings error: %s" % exc)
         elif choice == ID_QUIT:
             if self.on_quit:
                 try:

@@ -57,7 +57,7 @@ python src/main.py
 | 关闭 | 灰色 | **什么都不弹**, 连取词都不做 |
 
 - **左键单击 / 双击**图标: 切换开关
-- **右键**图标: 弹出菜单（启用取词 / 退出）
+- **右键**图标: 弹出菜单（启用取词 / 设置 / 退出）
 - 鼠标悬停在图标上会显示当前状态
 
 不想被打扰时点一下变灰即可; 关掉的瞬间, 已经排队的查词结果也会一并丢弃,
@@ -70,14 +70,24 @@ python src/main.py
 | `Ctrl+Alt+Q` | 退出 |
 | `Ctrl+Alt+P` | 切换开关 |
 
-命令行参数:
+## 设置
+
+右键托盘图标 → **设置**，改完立即生效，自动存进 `settings.json`。
+
+| 项目 | 默认 | 说明 |
+|---|---|---|
+| 启用取词 | 开 | 关掉后拖选什么都不弹 |
+| 拖选判定阈值 | 6 px | 拖动超过这个距离才认作选择；误弹就调大 |
+| 停留时间 | 9 秒 | 浮窗超时自动消失 |
+| 圆角半径 | 14 px | 0 = 直角 |
+| 不透明度 | 88% | 数值越大越不透明 |
+| 鼠标移到浮窗上时变清晰 | 开 | 平时半透明不挡阅读，要看清楚就移过去 |
+
+命令行参数（一般用不到）:
 
 ```powershell
-python src/main.py --drag 10 --hide-after 6
+python src/main.py --settings D:\my-settings.json
 ```
-
-- `--drag` 判定为拖选的像素阈值, 默认 6。误触发多就调大。
-- `--hide-after` 浮窗停留秒数, 默认 9。
 
 ## 工作原理
 
@@ -95,7 +105,9 @@ python src/main.py --drag 10 --hide-after 6
 - **查询**: 整串精确命中 → 词形还原兜底 → 逐词拆解, 三级降级。
   实测单次查询 0.06–0.3 ms。
 - **显示**: tkinter 无边框置顶小窗, 用 `WS_EX_NOACTIVATE`
-  保证不抢焦点, 不影响你正在打字的窗口。
+  保证不抢焦点, 不影响你正在打字的窗口。圆角走
+  `CreateRoundRectRgn` + `SetWindowRgn`, 半透明走
+  `SetLayeredWindowAttributes`; 鼠标压上去时自动变完全不透明。
 - **开关**: 托盘图标用 `Shell_NotifyIconW` 注册, 图标是运行时手工构造的
   RT_ICON 数据（`CreateIconFromResourceEx`），所以依然零第三方依赖。
 - **性能**: 钩子回调里只做算术和投递, 慢活全部丢给取词线程,
@@ -106,12 +118,17 @@ python src/main.py --drag 10 --hide-after 6
 ```
 src/dictionary.py    词典查询层(三级降级)
 src/capture.py       鼠标钩子 + 剪贴板取词
-src/popup.py         浮窗渲染
+src/popup.py         浮窗渲染(圆角 / 半透明 / 悬停变清晰)
+src/tray.py          托盘图标与菜单(纯 ctypes)
+src/settings.py      设置的读写与范围夹取
+src/settings_ui.py   设置窗口
 src/app.py           组装与线程调度
 src/main.py          入口
 scripts/fetch_dict.py    下载并校验词典
 scripts/build_index.py   构建词形索引
+scripts/preview_popup.py 调试用: 单独预览浮窗外观
 data/                词典数据(不入库, 约 180 MB)
+settings.json        个人设置(不入库, 首次改设置时生成)
 logs/app.log         运行日志
 ```
 
