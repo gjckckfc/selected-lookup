@@ -73,6 +73,8 @@ class SettingsWindow:
                     "0 = 直角，建议 12–16")
         self._scale(look, "不透明度", "opacity", 40, 100, 1, "%",
                     "数值越大越不透明")
+        self._scale(look, "浮窗宽度", "popup_width", 220, 560, 10, "px",
+                    "固定宽度，不随内容变化")
         self._scale(look, "浮窗最大高度", "max_height", 200, 1000, 10, "px",
                     "整个浮窗最高到多少，内容再多就用滚轮看")
         self._check(look, "鼠标移到浮窗上时变清晰", "hover_opaque")

@@ -53,6 +53,7 @@ def main():
         radius=settings.get("corner_radius"),
         opacity=settings.get("opacity"),
         hover_opaque=settings.get("hover_opaque"),
+        width=settings.get("popup_width"),
         max_height=settings.get("max_height"),
     )
     result = dictionary.lookup(LONG_SAMPLE if args.long else args.word)

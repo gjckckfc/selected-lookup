@@ -48,7 +48,10 @@ BUTTON_FG = "#c9d6ea"
 BUTTON_ACTIVE = "#3b4a63"
 
 FONT_FAMILY = "Microsoft YaHei UI"
-CARD_WIDTH = 430          # 内容区最大宽度; 实际宽度随内容自适应, 不会一律撑满
+# 尺寸: 固定值, 不随内容伸缩。这是阅读时的配角, 尺寸稳定且小才不喧宾夺主。
+DEFAULT_WIDTH = 300       # 浮窗总宽度(px); 再窄标题和标签就会折行
+DEFAULT_MAX_HEIGHT = 380  # 浮窗最大高度(px), 装不下就滚
+PADDING_X = 32            # 左右内边距 + 边框
 DRAG_SLOP = 4            # 松开时位移小于这个值算"点击", 否则算"拖动"
 MAX_DEF_LINES = 3        # 每个单词块最多显示几行释义
 MAX_ORIGIN_LINES = 2     # 原文最多显示几行, 超出收起
@@ -75,14 +78,17 @@ gdi32.CreateRoundRectRgn.argtypes = [ctypes.c_int] * 6
 
 class Popup:
     def __init__(self, master, hide_after=5.0, radius=14, opacity=88,
-                 hover_opaque=True, max_height=460, on_geometry=None):
+                 hover_opaque=True, width=DEFAULT_WIDTH,
+                 max_height=DEFAULT_MAX_HEIGHT, on_geometry=None):
         self.master = master
         self.hide_after = hide_after
         self.radius = radius
         self.opacity = max(40, min(100, opacity))
         self.hover_opaque = hover_opaque
+        self.width = max(220, width)
         self.max_height = max_height
         self.on_geometry = on_geometry
+        self._last_result = None
 
         self._timer = None
         self._hover_timer = None
@@ -117,19 +123,25 @@ class Popup:
         self.header_frame.pack(fill="x")
 
         # 内容区: Canvas + 内嵌 Frame, 内容超出时才能滚动
+        inner_w = self.inner_width
         self.canvas = tk.Canvas(self.card, bg=CARD_BG, highlightthickness=0,
-                                bd=0, width=CARD_WIDTH, height=10,
+                                bd=0, width=inner_w, height=10,
                                 yscrollincrement=SCROLL_STEP)
         self.canvas.pack(fill="x", pady=(0, 0))
         self.inner = tk.Frame(self.canvas, bg=CARD_BG)
         self.canvas_window = self.canvas.create_window((0, 0), window=self.inner,
-                                                       anchor="nw", width=CARD_WIDTH)
+                                                       anchor="nw", width=inner_w)
         self.inner.bind("<Configure>", self._on_inner_configure)
         self.win.bind("<MouseWheel>", self._on_wheel)
 
         self.win.update_idletasks()
         self._hwnd = user32.GetParent(self.win.winfo_id())
         self._apply_styles()
+
+    @property
+    def inner_width(self):
+        """内容区(Canvas)宽度。"""
+        return max(self.width - PADDING_X, 160)
 
     # ------------------------------------------------------------------
     # Windows 层面的外观
@@ -161,7 +173,7 @@ class Popup:
             user32.SetWindowRgn(self._hwnd, region, True)
 
     def apply_settings(self, radius=None, opacity=None, hide_after=None,
-                       hover_opaque=None, max_height=None):
+                       hover_opaque=None, width=None, max_height=None):
         if radius is not None:
             self.radius = radius
         if opacity is not None:
@@ -170,16 +182,24 @@ class Popup:
             self.hide_after = hide_after
         if hover_opaque is not None:
             self.hover_opaque = hover_opaque
+        if width is not None:
+            self.width = max(220, width)
+            if self._last_result is not None:
+                # 折行位置是按宽度算好的, 宽度变了得重排
+                self._render(self._last_result)
         if max_height is not None:
             self.max_height = max_height
         self._hovering = False
         if not self._hwnd:
             return
-        self._layout()
-        width = self.win.winfo_width() or self.win.winfo_reqwidth()
-        height = self.win.winfo_height() or self.win.winfo_reqheight()
+        if self.win.winfo_viewable():
+            self._resize_in_place()
+        else:
+            self._layout()
+        win_w = self.win.winfo_width() or self.win.winfo_reqwidth()
+        win_h = self.win.winfo_height() or self.win.winfo_reqheight()
         self._apply_alpha(self.opacity)
-        self._apply_round_region(width, height)
+        self._apply_round_region(win_w, win_h)
 
     # ------------------------------------------------------------------
     # 滚动
@@ -359,7 +379,7 @@ class Popup:
 
     def _label(self, parent, text, fg, size=10, bold=False, pady=0, wraplength=None):
         label = tk.Label(parent, text=text, bg=CARD_BG, fg=fg, justify="left",
-                         anchor="w", wraplength=wraplength or (CARD_WIDTH - 24),
+                         anchor="w", wraplength=wraplength or (self.inner_width - 14),
                          font=(FONT_FAMILY, size, "bold" if bold else "normal"))
         label.pack(fill="x", pady=pady)
         return label
@@ -370,13 +390,13 @@ class Popup:
         self._header_box = box
         self._title_label = tk.Label(
             box, text=title, bg=CARD_BG, fg=TITLE_FG, justify="left", anchor="nw",
-            wraplength=CARD_WIDTH - 108,
+            wraplength=self.inner_width - 78,
             font=(FONT_FAMILY, 9 if small_title else 12, "normal" if small_title else "bold"))
         self._title_label.pack(anchor="w")
         self._subtitle_base = subtitle or ""
         self._subtitle_label = tk.Label(box, text=self._subtitle_base, bg=CARD_BG,
                                         fg=NOTE_FG, justify="left", anchor="w",
-                                        wraplength=CARD_WIDTH - 24,
+                                        wraplength=self.inner_width,
                                         font=(FONT_FAMILY, 8))
         if subtitle:
             self._subtitle_label.pack(anchor="w", pady=(3, 0))
@@ -411,7 +431,7 @@ class Popup:
         holder = tk.Frame(self._header_box, bg=CARD_BG)
         holder.pack(anchor="w", fill="x", pady=(4, 0))
         label = tk.Label(holder, text="", bg=CARD_BG, fg=NOTE_FG, justify="left",
-                         anchor="w", wraplength=CARD_WIDTH - 108,
+                         anchor="w", wraplength=self.inner_width - 78,
                          font=(FONT_FAMILY, 9))
         label.pack(anchor="w")
         link = tk.Label(holder, text="展开全文", bg=CARD_BG, fg=LINK_FG,
@@ -437,7 +457,7 @@ class Popup:
             self._origin_link.configure(text="收起")
             self._origin_link.pack(anchor="w", pady=(2, 0))
             return
-        lines = self._wrap_lines(text, self._small_font, CARD_WIDTH - 120)
+        lines = self._wrap_lines(text, self._small_font, self.inner_width - 84)
         if len(lines) > MAX_ORIGIN_LINES:
             shown = "\n".join(lines[:MAX_ORIGIN_LINES]) + " …"
             self._origin_label.configure(text=shown)
@@ -490,11 +510,11 @@ class Popup:
         block._copy_text = copy_text
         if title:
             tk.Label(block, text=title, bg=CARD_BG, fg=PHONETIC_FG, justify="left",
-                     anchor="w", wraplength=CARD_WIDTH - 34,
+                     anchor="w", wraplength=self.inner_width - 14,
                      font=(FONT_FAMILY, 10, "bold")).pack(fill="x")
         for index, line in enumerate(lines):
             tk.Label(block, text=line, bg=CARD_BG, fg=BODY_FG, justify="left",
-                     anchor="w", wraplength=CARD_WIDTH - 34,
+                     anchor="w", wraplength=self.inner_width - 14,
                      font=(FONT_FAMILY, 9)).pack(fill="x",
                                                   pady=(3 if index == 0 else 1, 0))
         return block
@@ -606,10 +626,8 @@ class Popup:
         self.inner.update_idletasks()
         content_h = self.inner.winfo_reqheight()
 
-        # 宽度随内容走: 短词条就窄一点, 长内容最多到 CARD_WIDTH
-        inner_w = max(self.inner.winfo_reqwidth(), 180)
-        header_w = max(self.header_frame.winfo_reqwidth(), 180)
-        target_w = max(220, min(max(inner_w, header_w), CARD_WIDTH))
+        # 宽度固定, 不随内容伸缩
+        target_w = self.inner_width
         self.canvas.configure(width=target_w)
         self.canvas.itemconfigure(self.canvas_window, width=target_w)
         self.win.update_idletasks()
@@ -624,6 +642,7 @@ class Popup:
         self.win.update_idletasks()
 
     def show(self, result, x, y):
+        self._last_result = result
         self._render(result)
         self._layout()
         self.canvas.yview_moveto(0)
