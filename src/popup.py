@@ -48,7 +48,7 @@ BUTTON_FG = "#c9d6ea"
 BUTTON_ACTIVE = "#3b4a63"
 
 FONT_FAMILY = "Microsoft YaHei UI"
-CARD_WIDTH = 420
+CARD_WIDTH = 430          # 内容区最大宽度; 实际宽度随内容自适应, 不会一律撑满
 DRAG_SLOP = 4            # 松开时位移小于这个值算"点击", 否则算"拖动"
 MAX_DEF_LINES = 3        # 每个单词块最多显示几行释义
 MAX_ORIGIN_LINES = 2     # 原文最多显示几行, 超出收起
@@ -288,6 +288,11 @@ class Popup:
         self._drag_offset = None
         if moved:
             return
+        # 自己带点击回调的控件(比如「展开全文」)优先
+        handler = getattr(widget, "_on_click", None)
+        if handler is not None:
+            handler()
+            return
         block = self._block_of(widget)
         if block is not None:
             text = getattr(block, "_copy_text", "")
@@ -417,7 +422,12 @@ class Popup:
         # 原文本身也当做一个可点块: 悬停高亮, 点击复制整段原文
         label._is_block = True
         label._copy_text = text
-        link.bind("<Button-1>", lambda event: self._toggle_origin())
+        # 不能用 link.bind("<Button-1>", ...): 之后 _bind_interactive 会把
+        # 每个控件的 <Button-1> 重绑成拖动起点, 把那次的处理覆盖掉。
+        # 所以改用自定义属性, 由 _on_release 在"没拖动"时调用。
+        link._on_click = self._toggle_origin
+        link.bind("<Enter>", lambda event: link.configure(fg=TITLE_FG))
+        link.bind("<Leave>", lambda event: link.configure(fg=LINK_FG))
         self._apply_origin()
 
     def _apply_origin(self):
@@ -596,6 +606,14 @@ class Popup:
         self.inner.update_idletasks()
         content_h = self.inner.winfo_reqheight()
 
+        # 宽度随内容走: 短词条就窄一点, 长内容最多到 CARD_WIDTH
+        inner_w = max(self.inner.winfo_reqwidth(), 180)
+        header_w = max(self.header_frame.winfo_reqwidth(), 180)
+        target_w = max(220, min(max(inner_w, header_w), CARD_WIDTH))
+        self.canvas.configure(width=target_w)
+        self.canvas.itemconfigure(self.canvas_window, width=target_w)
+        self.win.update_idletasks()
+
         # 先量出"除内容区以外"的固定高度(边框 + 内边距 + 标题区)
         self.canvas.configure(height=1)
         self.win.update_idletasks()
@@ -603,7 +621,6 @@ class Popup:
 
         visible = min(content_h, max(self.max_height - chrome, 40))
         self.canvas.configure(height=max(visible, 1))
-        self.canvas.itemconfigure(self.canvas_window, width=CARD_WIDTH)
         self.win.update_idletasks()
 
     def show(self, result, x, y):
