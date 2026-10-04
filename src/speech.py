@@ -5,7 +5,8 @@
   - 启动后在后台查一遍系统装了哪些语音, 挑一个英语的、一个中文的
   - 常驻一个 PowerShell 进程(System.Speech)当合成器: stdin 发任务, stdout 收结果
   - 合成结果写进 data/voice_cache/, 同一个词/句只合成一次, 之后零延迟
-  - 播放用标准库 winsound 异步播; 再点一次会立刻打断上一句
+  - 播放走系统 MCI 接口(open/play/stop/close): 收到新请求先显式停掉上一句,
+    所以"正在念原文时点了单词"会立刻断掉原文改念单词
 
 为什么用 PowerShell 而不是纯 ctypes: 系统语音是一套 COM 接口, 纯 ctypes
 要手写两百行指针操作, 出错就是整个进程崩溃。让系统自带的 PowerShell 承载,
@@ -17,8 +18,23 @@ import hashlib
 import subprocess
 import threading
 import time
-import winsound
+import ctypes
 from pathlib import Path
+
+winmm = ctypes.WinDLL("winmm", use_last_error=True)
+winmm.mciSendStringW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p,
+                                 ctypes.c_uint, ctypes.c_void_p]
+
+PLAY_ALIAS = "lookupvoice"
+
+
+def _mci(command, want_value=False):
+    """调一次 MCI。返回错误码, want_value=True 时还返回输出文本。"""
+    buf = ctypes.create_unicode_buffer(512)
+    err = winmm.mciSendStringW(command, buf, 512, None)
+    if want_value:
+        return err, buf.value
+    return err
 
 # 别让 PowerShell 弹黑框
 CREATE_NO_WINDOW = 0x08000000
@@ -140,6 +156,8 @@ class Speech:
         self.preferred = ""              # 用户指定的英语语音, 空 = 自动挑
         self._proc = None
         self._lock = threading.Lock()
+        self._play_lock = threading.Lock()
+        self._playing = False
         self._inflight_lock = threading.Lock()
         self._inflight = set()           # 正在预热的文本, 避免重复合成
         self._started = False
@@ -283,6 +301,8 @@ class Speech:
             return False
         self._generation += 1
         generation = self._generation
+        # 用户点了新的: 立刻掐掉上一句, 不等它念完
+        self._stop_playback()
         threading.Thread(target=self._speak, args=(text, voice, notify, generation),
                          daemon=True).start()
         return True
@@ -374,19 +394,32 @@ class Speech:
         return self.cache_dir / (hashlib.sha1(raw).hexdigest()[:16] + ".wav")
 
     @staticmethod
-    def _play(path):
-        try:
-            winsound.PlaySound(str(path), winsound.SND_FILENAME
-                               | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
-        except RuntimeError:
-            pass
+    def _stop_locked():
+        """掐掉正在播的那句。调用方要持有 _play_lock。"""
+        _mci("stop %s" % PLAY_ALIAS)
+        _mci("close %s" % PLAY_ALIAS)
+
+    def _play(self, path):
+        """播放一个 wav。要换句时先显式停掉上一句——两句同时响是没人想要的。"""
+        with self._play_lock:
+            self._stop_locked()
+            err = _mci('open "%s" type waveaudio alias %s' % (path, PLAY_ALIAS))
+            if err == 0:
+                err = _mci("play %s" % PLAY_ALIAS)
+                if err == 0:
+                    self._playing = True
+                    return
+            self._playing = False
+            self.log("播放失败: MCI 错误码 %d" % err)
+
+    def _stop_playback(self):
+        with self._play_lock:
+            self._stop_locked()
+            self._playing = False
 
     def stop(self):
         self._generation += 1           # 让还没合成完的请求作废
-        try:
-            winsound.PlaySound(None, winsound.SND_PURGE)
-        except RuntimeError:
-            pass
+        self._stop_playback()
 
     def close(self):
         self._closed = True

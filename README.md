@@ -353,7 +353,7 @@ vocabulary/
 - **开关**: 托盘图标用 `Shell_NotifyIconW` 注册, 图标是运行时手工构造的
   RT_ICON 数据（`CreateIconFromResourceEx`），所以依然零第三方依赖。
 - **朗读**: 用 Windows 自带的语音引擎（`System.Speech`）在后台合成成 wav,
-  再用标准库 `winsound` 异步播放。合成进程按需拉起、闲 5 分钟回收,
+  再用系统的 MCI 接口播放（可以精确打断上一句）。合成进程按需拉起、闲 5 分钟回收,
   结果按内容哈希缓存在 `data/voice_cache/`, 同一个词/句第二次是零延迟。
 - **性能**: 钩子回调里只做算术和投递, 慢活全部丢给取词线程,
   不会拖慢系统鼠标响应。
