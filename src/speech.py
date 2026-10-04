@@ -351,20 +351,21 @@ class Speech:
         path = self._cache_path(text, voice, rate)
         if path is None or path.exists():
             return False
+        key = (voice, rate, text)
         with self._inflight_lock:
-            if text in self._inflight:
+            if key in self._inflight:      # 换音色后同一个词是另一份音频, 要分开算
                 return False
-            self._inflight.add(text)
-        threading.Thread(target=self._prewarm_worker, args=(text, voice, rate, path),
+            self._inflight.add(key)
+        threading.Thread(target=self._prewarm_worker, args=(key, text, voice, rate, path),
                          daemon=True).start()
         return True
 
-    def _prewarm_worker(self, text, voice, rate, path):
+    def _prewarm_worker(self, key, text, voice, rate, path):
         try:
             self._synthesize(text, voice, rate, path)
         finally:
             with self._inflight_lock:
-                self._inflight.discard(text)
+                self._inflight.discard(key)
 
     def _speak(self, text, voice, notify, generation, rate):
         path = self._speak_path(text, voice, rate)
