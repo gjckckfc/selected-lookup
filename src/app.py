@@ -93,7 +93,6 @@ class App:
 
     def _reload_translator(self):
         self.translator.configure(
-            base_url=self.settings.get("api_base"),
             api_key=self.settings.get("api_key"),
             model=self.settings.get("model"),
         )
@@ -174,7 +173,7 @@ class App:
             self.watcher.drag_threshold = value
         elif key == "hide_after":
             self.popup.apply_settings(hide_after=value)
-        elif key in ("translate_enabled", "api_base", "api_key", "model"):
+        elif key in ("translate_enabled", "api_key", "model"):
             self._reload_translator()
         self.log("设置 %s = %s" % (key, value))
 

@@ -73,13 +73,12 @@ class SettingsWindow:
                     "取消选中会立刻收起；一直选着不动则超过这个时间收起")
 
         # ---- 翻译 ----
-        tr = ttk.LabelFrame(self.win, text="整句翻译（用你自己的 API）", padding=12,
+        tr = ttk.LabelFrame(self.win, text="整句翻译（DeepSeek）", padding=12,
                             style="Group.TLabelframe")
         tr.pack(fill="x", pady=(14, 0))
         self._check(tr, "启用整句翻译（选中句子时自动翻译）", "translate_enabled")
-        self._entry(tr, "接口地址", "api_base",
-                    "OpenAI 兼容地址，例如 https://api.deepseek.com/v1")
-        self._entry(tr, "API 密钥", "api_key", "明文存在 settings.json 里", secret=True)
+        self._entry(tr, "API 密钥", "api_key",
+                    "在 platform.deepseek.com 申请；明文存在 settings.json 里", secret=True)
         self._entry(tr, "模型名", "model",
                     "建议用非推理模型（如 deepseek-flash），推理模型会多花思考 token")
         test_row = ttk.Frame(tr)

@@ -21,6 +21,11 @@ import urllib.request
 
 TARGET_LANGUAGE = "简体中文"
 
+# 目前只接 DeepSeek: 便宜, 而且翻译是个很基础的功能, 不值得为它引入更贵的服务。
+# 以后要加别家, 在这里加一张 "服务商 -> 地址" 的表, 让用户选即可。
+PROVIDER_NAME = "DeepSeek"
+PROVIDER_BASE = "https://api.deepseek.com/v1"
+
 SYSTEM_PROMPT = (
     "你是一个翻译引擎。把用户给出的英文翻译成%s。"
     "只输出译文本身：不要解释、不要复述原文、不要加引号或代码块、不要寒暄。"
@@ -45,7 +50,7 @@ def clean_output(text):
 class Translator:
     def __init__(self, cache_path=None, logger=None):
         self.log = logger or (lambda message: None)
-        self.base_url = ""
+        self.base_url = PROVIDER_BASE
         self.api_key = ""
         self.model = ""
         self._cache = None
@@ -63,8 +68,7 @@ class Translator:
 
     # ------------------------------------------------------------------
 
-    def configure(self, base_url="", api_key="", model=""):
-        self.base_url = (base_url or "").strip()
+    def configure(self, api_key="", model=""):
         self.api_key = (api_key or "").strip()
         self.model = (model or "").strip()
 
