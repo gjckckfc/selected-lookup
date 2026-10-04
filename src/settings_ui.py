@@ -17,6 +17,16 @@ from tkinter import ttk
 FONT = ("Microsoft YaHei UI", 9)
 TITLE_FONT = ("Microsoft YaHei UI", 11, "bold")
 AUTO_VOICE = "自动（推荐）"
+# 对齐用的字段标签(标签宽度按"中文算两格"折算, 取最长的那个 + 1)
+FIELD_LABELS = ("拖动判定", "自动收起", "朗读内容", "英语声音", "语速")
+
+
+def _field_width():
+    widest = 0
+    for text in FIELD_LABELS:
+        units = sum(2 if ord(ch) > 0x2E80 else 1 for ch in text)
+        widest = max(widest, units)
+    return widest + 1
 
 
 class SettingsWindow:
@@ -28,6 +38,7 @@ class SettingsWindow:
         self.on_test_translate = None
         self.on_speech_info = None
         self.on_voice_list = None
+        self.on_voice_missing = None
         self.win = None
         self._loading = False
         self._scales = {}
@@ -38,6 +49,9 @@ class SettingsWindow:
         self._voice_combo = None
         self._voice_var = None
         self._top_var = None
+        self._speak_hint = None
+        self._speech_help = None
+        self._field = _field_width()
         self._test_queue = queue.Queue()
         self._testing = False
 
@@ -84,13 +98,13 @@ class SettingsWindow:
         group = ttk.LabelFrame(self.win, text="取词", padding=10, style="Group.TLabelframe")
         group.pack(fill="x")
         self._check(group, "启用取词（关闭后拖选什么都不弹）", "enabled")
-        self._scale(group, "拖选判定阈值", "drag_threshold", 2, 40, 1, "px",
-                    "只有拖动超过这个距离才认作选择，误弹就调大")
-        self._scale(group, "最长停留时间", "hide_after", 2, 30, 1, "秒",
-                    "取消选中会立刻收起；一直选着不动则超过这个时间收起")
+        self._scale(group, "拖动判定", "drag_threshold", 2, 40, 1, "px",
+                    "拖动超过这个距离才算选中，误弹就调大")
+        self._scale(group, "自动收起", "hide_after", 2, 30, 1, "秒",
+                    "取消选中会立刻收起；一直选着不动，超过这个时间也会收起")
 
         # ---- 翻译 ----
-        tr = ttk.LabelFrame(self.win, text="整句翻译（DeepSeek）", padding=10,
+        tr = ttk.LabelFrame(self.win, text="AI 翻译（DeepSeek）", padding=10,
                             style="Group.TLabelframe")
         tr.pack(fill="x", pady=(12, 0))
         self._check(tr, "启用整句翻译（选中句子时自动翻译）", "translate_enabled")
@@ -118,14 +132,12 @@ class SettingsWindow:
         self._voice_row(sp)
         self._scale(sp, "语速", "speak_rate", -6, 6, 1, "",
                     None, fmt=self._rate_text)
-        self._check(sp, "选中就提前生成语音（更快，但流量更大）", "speak_prewarm")
         self._speak_hint = ttk.Label(sp, text="", style="Hint.TLabel",
                                      wraplength=330, justify="left")
         self._speak_hint.pack(anchor="w", pady=(6, 0))
-        buttons = ttk.Frame(sp)
-        buttons.pack(fill="x", pady=(6, 0))
-        ttk.Button(buttons, text="打开 Windows 语音设置",
-                   command=self._open_speech_settings).pack(side="left")
+        # 只有找不到英语语音时才需要这条"外援"路径
+        self._speech_help = ttk.Button(sp, text="这台机器没有英语语音？去 Windows 里加一个",
+                                       command=self._open_speech_settings)
 
         # ---- 底部按钮 ----
         footer = ttk.Frame(self.win)
@@ -182,14 +194,13 @@ class SettingsWindow:
 
     def _scale(self, parent, text, key, low, high, step, unit, hint=None, fmt=None):
         row = ttk.Frame(parent)
-        row.pack(fill="x", pady=(8, 0))
-        ttk.Label(row, text=text, width=8, anchor="w").pack(side="left")
+        row.pack(fill="x", pady=(6, 0))
+        ttk.Label(row, text=text, width=self._field, anchor="w").pack(side="left")
         value_label = ttk.Label(row, text="", width=8, anchor="e")
         value_label.pack(side="right")
-
-        scale = ttk.Scale(parent, from_=low, to=high, orient="horizontal")
-        scale.pack(fill="x", pady=(2, 0))
-        scale.configure(command=lambda value: self._on_scale(key, value))
+        scale = ttk.Scale(row, from_=low, to=high, orient="horizontal",
+                          command=lambda value: self._on_scale(key, value))
+        scale.pack(side="left", fill="x", expand=True, padx=(4, 8))
         self._scales[key] = scale
         self._value_labels[key] = (value_label, step, unit, fmt)
 
@@ -215,7 +226,7 @@ class SettingsWindow:
         row = ttk.Frame(parent)
         row.pack(fill="x", pady=(8, 0))
         if label:
-            ttk.Label(row, text=label, width=8, anchor="w").pack(side="left")
+            ttk.Label(row, text=label, width=self._field, anchor="w").pack(side="left")
         var = tk.StringVar(value=str(self.settings.get(key)))
         for text, value in options:
             ttk.Radiobutton(row, text=text, value=value, variable=var,
@@ -246,8 +257,8 @@ class SettingsWindow:
 
     def _voice_row(self, parent):
         row = ttk.Frame(parent)
-        row.pack(fill="x", pady=(8, 0))
-        ttk.Label(row, text="英语声音", width=8, anchor="w").pack(side="left")
+        row.pack(fill="x", pady=(6, 0))
+        ttk.Label(row, text="英语声音", width=self._field, anchor="w").pack(side="left")
         var = tk.StringVar(value=AUTO_VOICE)
         combo = ttk.Combobox(row, textvariable=var, state="readonly", width=27)
         combo.pack(side="left", padx=(8, 0))
@@ -372,6 +383,12 @@ class SettingsWindow:
                 var.set(str(self.settings.get(key) or ""))
             if self._speak_hint is not None and self.on_speech_info:
                 self._speak_hint.configure(text=self.on_speech_info())
+            if self._speech_help is not None:
+                missing = bool(self.on_voice_missing()) if self.on_voice_missing else False
+                if missing:
+                    self._speech_help.pack(anchor="w", pady=(6, 0))
+                else:
+                    self._speech_help.pack_forget()
         finally:
             self._loading = False
 

@@ -19,7 +19,7 @@ DEFAULTS = {
     "speak_mode": "en",        # en = 只读英文; both = 中英都读
     "speak_voice": "",         # 英语用哪个声音; 空 = 自动挑
     "speak_rate": 0,           # 语速档位: -6 慢 ~ 0 正常 ~ +6 快
-    "speak_prewarm": False,    # 选中就提前合成语音(更快, 但流量更大)
+    "speak_prewarm": True,     # 选中就提前合成语音(界面不再暴露, 默认开)
     # --- 界面偏好 ---
     "ui_topmost": True,        # 设置窗口是否置顶
     # --- 整句翻译（走用户自己的 API 密钥）---

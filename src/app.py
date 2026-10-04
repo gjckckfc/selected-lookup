@@ -116,6 +116,7 @@ class App:
         self.settings_window.on_test_translate = self._test_translate
         self.settings_window.on_speech_info = self._speech_info
         self.settings_window.on_voice_list = self.speech.english_voices
+        self.settings_window.on_voice_missing = self._voice_missing
 
     # ------------------------------------------------------------------
     # 朗读
@@ -177,6 +178,12 @@ class App:
         if self.settings.get("speak_mode") == "both" and self.speech.voice_zh:
             name += " ／ " + self.speech.voice_zh
         return "当前声音：%s\n右键浮窗里的词或句子即可朗读" % name
+
+    def _voice_missing(self):
+        """设置面板用: 找不到英语语音时才显示"去 Windows 加一个"的引导按钮。"""
+        if self.speech.preparing:
+            return False
+        return not self.speech.available
 
     # ------------------------------------------------------------------
     # 翻译
