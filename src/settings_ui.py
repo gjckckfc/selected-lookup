@@ -83,9 +83,10 @@ class SettingsWindow:
                     "建议用非推理模型（如 deepseek-flash），推理模型会多花思考 token")
         test_row = ttk.Frame(tr)
         test_row.pack(fill="x", pady=(10, 0))
-        ttk.Button(test_row, text="测试连接", command=self._test).pack(side="left")
+        ttk.Button(test_row, text="保存", command=self._save).pack(side="left")
+        ttk.Button(test_row, text="测试连接", command=self._test).pack(side="left", padx=(8, 0))
         self._test_label = ttk.Label(test_row, text="", style="Hint.TLabel",
-                                     wraplength=250, justify="left")
+                                     wraplength=210, justify="left")
         self._test_label.pack(side="left", padx=(10, 0))
         ttk.Label(tr, text="选中文字会发送给你填写的服务商；不上传其他任何内容。",
                   style="Hint.TLabel").pack(anchor="w", pady=(6, 0))
@@ -161,9 +162,26 @@ class SettingsWindow:
         self.settings.set(key, value)
         self.on_change(key, value)
 
+    def _save_entries(self):
+        """把输入框里的当前值写进设置, 返回有改动的键。"""
+        changed = []
+        for key, var in self._entries.items():
+            value = var.get().strip()
+            if value != (self.settings.get(key) or ""):
+                self.settings.set(key, value)
+                self.on_change(key, value)
+                changed.append(key)
+        return changed
+
+    def _save(self):
+        changed = self._save_entries()
+        self._test_label.configure(text="已保存" if changed else "已保存（没有改动）")
+
     def _test(self):
         if self._testing or self.on_test_translate is None:
             return
+        # 先落盘, 否则测试读到的还是没保存的旧值
+        self._save_entries()
         self._testing = True
         self._test_label.configure(text="测试中…")
 

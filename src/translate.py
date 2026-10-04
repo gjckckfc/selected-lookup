@@ -47,12 +47,32 @@ def clean_output(text):
     return text.strip().strip('"').strip("“”").strip()
 
 
+def extract_error(body):
+    """从服务商返回的内容里取出人能看懂的报错。"""
+    if not body:
+        return "服务商没有返回内容"
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return body.strip()[:160]
+    if isinstance(data, dict):
+        error = data.get("error")
+        if isinstance(error, dict) and error.get("message"):
+            return str(error["message"])[:160]
+        if isinstance(error, str):
+            return error[:160]
+        if data.get("message"):
+            return str(data["message"])[:160]
+    return body.strip()[:160]
+
+
 class Translator:
     def __init__(self, cache_path=None, logger=None):
         self.log = logger or (lambda message: None)
         self.base_url = PROVIDER_BASE
         self.api_key = ""
         self.model = ""
+        self.last_error = ""
         self._cache = None
         self._lock = None
         if cache_path is not None:
@@ -136,6 +156,7 @@ class Translator:
     def translate(self, text):
         """同步翻译。返回译文, 失败返回 None。"""
         if not self.available:
+            self.last_error = "密钥或模型名没填"
             return None
         text = text.strip()
         if not text:
@@ -148,47 +169,55 @@ class Translator:
             self.log("翻译命中缓存")
             return cached
 
-        payload = {
+        base = {
             "model": self.model,
             "temperature": 0,
-            "max_tokens": max(96, min(len(text), 800)),
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": text},
             ],
         }
+        # DeepSeek 的思考模式默认是开的, 且默认强度 high。
+        # 必须显式关掉: 否则思考 token 会吃掉输出预算, 正文返回空。
+        thinking_off = dict(base, thinking={"type": "disabled"},
+                            max_tokens=max(160, min(len(text), 800)))
+        # 万一别的服务商不认 thinking 字段, 退回不带它的版本, 并把预算放大给思考留地方
+        fallback = dict(base, max_tokens=max(2000, min(len(text) * 8, 4000)))
         started = time.perf_counter()
         try:
             try:
-                # 先试着关掉推理模型的思考模式: 那些思考 token 也是要计费的
-                data = self._post(dict(payload, enable_thinking=False))
+                data = self._post(thinking_off)
             except urllib.error.HTTPError as exc:
                 if exc.code != 400:
                     raise
-                # 服务商不认这个字段, 去掉再来一次
-                self.log("服务商不接受 enable_thinking, 已回落")
-                data = self._post(payload)
+                self.log("服务商不接受 thinking 字段, 已回落")
+                data = self._post(fallback)
         except urllib.error.HTTPError as exc:
             detail = ""
             try:
-                detail = exc.read().decode("utf-8", "replace")[:200]
+                detail = exc.read().decode("utf-8", "replace")
             except Exception:
                 pass
-            self.log("翻译失败 HTTP %s %s" % (exc.code, detail))
+            self.last_error = "HTTP %s：%s" % (exc.code, extract_error(detail))
+            self.log("翻译失败 " + self.last_error)
             return None
         except Exception as exc:
-            self.log("翻译失败: %s" % exc)
+            self.last_error = "%s：%s" % (type(exc).__name__, exc)
+            self.log("翻译失败 " + self.last_error)
             return None
 
         cost = (time.perf_counter() - started) * 1000
         try:
             content = data["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError):
+            self.last_error = "服务商返回结构异常"
             self.log("翻译返回结构异常: %s" % str(data)[:200])
             return None
         target = clean_output(content)
         if not target:
+            self.last_error = "服务商返回了空译文"
             return None
+        self.last_error = ""
         self.log("翻译完成 %.0fms  %d 字 -> %d 字" % (cost, len(text), len(target)))
         self.cache_put(text, target)
         return target
@@ -196,15 +225,13 @@ class Translator:
     def test(self):
         """测试连接。返回 (是否成功, 说明)。"""
         if not self.available:
-            return False, "接口地址、密钥、模型名都要填"
+            return False, "API 密钥和模型名都要填"
+        self.last_error = ""
         started = time.perf_counter()
-        try:
-            result = self.translate("The demand curve slopes downward.")
-        except Exception as exc:
-            return False, str(exc)
+        result = self.translate("The demand curve slopes downward.")
         cost = (time.perf_counter() - started) * 1000
         if result is None:
-            return False, "连接失败，具体原因见 logs/app.log"
+            return False, self.last_error or "连接失败"
         return True, "成功（%.0f ms）：%s" % (cost, result[:60])
 
     def close(self):
