@@ -69,6 +69,7 @@ class App:
             enabled=bool(self.settings.get("speak_enabled")),
         )
         self.speech.preferred = str(self.settings.get("speak_voice") or "")
+        self.speech.rate = int(self.settings.get("speak_rate") or 0)
         self.popup = Popup(
             self.root,
             hide_after=self.settings.get("hide_after"),
@@ -172,10 +173,10 @@ class App:
         if not self.speech.available:
             return ("这台机器上没有找到英语语音，右键朗读暂时用不了。"
                     "点下面的按钮去 Windows 设置里加一个英语语音就行。")
+        name = self.speech.voice_en
         if self.settings.get("speak_mode") == "both" and self.speech.voice_zh:
-            return "当前声音：%s（英语）／ %s（中文）。右键浮窗里的词或句子即可朗读。" % (
-                self.speech.voice_en, self.speech.voice_zh)
-        return "当前声音：%s。右键浮窗里的词或句子即可朗读。" % self.speech.voice_en
+            name += " ／ " + self.speech.voice_zh
+        return "当前声音：%s\n右键浮窗里的词或句子即可朗读" % name
 
     # ------------------------------------------------------------------
     # 翻译
@@ -270,6 +271,9 @@ class App:
             self.speech.set_preferred(str(value or ""))
             self.log("朗读语音 = %s" % (value or "自动"))
             return
+        if key == "speak_rate":
+            self.speech.set_rate(value)
+            return
         if key == "drag_threshold":
             self.watcher.drag_threshold = value
         elif key == "hide_after":
@@ -302,6 +306,7 @@ class App:
         self.tray.set_notebook_enabled(note_on)
         self.speech.set_enabled(bool(self.settings.get("speak_enabled")))
         self.speech.set_preferred(str(self.settings.get("speak_voice") or ""))
+        self.speech.set_rate(self.settings.get("speak_rate"))
         want = bool(self.settings.get("enabled"))
         if want != self.enabled:
             self._toggle()

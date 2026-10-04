@@ -6,10 +6,12 @@
 """
 from __future__ import annotations
 
+import ctypes
 import os
 import queue
 import threading
 import tkinter as tk
+from ctypes import wintypes
 from tkinter import ttk
 
 FONT = ("Microsoft YaHei UI", 9)
@@ -54,7 +56,7 @@ class SettingsWindow:
         self.win = tk.Toplevel(self.master)
         self.win.title("设置 · 选中即查")
         self.win.resizable(False, False)
-        self.win.configure(padx=18, pady=16)
+        self.win.configure(padx=18, pady=14)
 
         style = ttk.Style(self.win)
         for theme in ("vista", "winnative", "clam"):
@@ -66,12 +68,14 @@ class SettingsWindow:
         style.configure("Hint.TLabel", foreground="#6b7280", font=(FONT[0], 8))
         style.configure("Group.TLabelframe.Label", font=(FONT[0], 9, "bold"))
 
-        ttk.Label(self.win, text="设置", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(self.win, text="改完立即生效，自动保存", style="Hint.TLabel").pack(
-            anchor="w", pady=(2, 12))
+        head = ttk.Frame(self.win)
+        head.pack(fill="x", pady=(0, 10))
+        ttk.Label(head, text="设置", style="Title.TLabel").pack(side="left")
+        ttk.Label(head, text="改完立即生效，自动保存", style="Hint.TLabel").pack(
+            side="left", padx=(10, 0), pady=(4, 0))
 
         # ---- 取词 ----
-        group = ttk.LabelFrame(self.win, text="取词", padding=12, style="Group.TLabelframe")
+        group = ttk.LabelFrame(self.win, text="取词", padding=10, style="Group.TLabelframe")
         group.pack(fill="x")
         self._check(group, "启用取词（关闭后拖选什么都不弹）", "enabled")
         self._scale(group, "拖选判定阈值", "drag_threshold", 2, 40, 1, "px",
@@ -80,9 +84,9 @@ class SettingsWindow:
                     "取消选中会立刻收起；一直选着不动则超过这个时间收起")
 
         # ---- 翻译 ----
-        tr = ttk.LabelFrame(self.win, text="整句翻译（DeepSeek）", padding=12,
+        tr = ttk.LabelFrame(self.win, text="整句翻译（DeepSeek）", padding=10,
                             style="Group.TLabelframe")
-        tr.pack(fill="x", pady=(14, 0))
+        tr.pack(fill="x", pady=(12, 0))
         self._check(tr, "启用整句翻译（选中句子时自动翻译）", "translate_enabled")
         self._entry(tr, "API 密钥", "api_key",
                     "在 platform.deepseek.com 申请；明文存在 settings.json 里", secret=True)
@@ -99,23 +103,27 @@ class SettingsWindow:
                   style="Hint.TLabel").pack(anchor="w", pady=(6, 0))
 
         # ---- 朗读 ----
-        sp = ttk.LabelFrame(self.win, text="朗读（用系统自带语音，不联网）", padding=12,
+        sp = ttk.LabelFrame(self.win, text="朗读（微软神经网络语音）", padding=10,
                             style="Group.TLabelframe")
-        sp.pack(fill="x", pady=(14, 0))
+        sp.pack(fill="x", pady=(12, 0))
         self._check(sp, "启用右键朗读（右键浮窗里的词或句子就念出来）", "speak_enabled")
         self._radio_row(sp, "speak_mode",
-                        (("只读英文", "en"), ("中英都读", "both")))
+                        (("只读英文", "en"), ("中英都读", "both")), label="朗读内容")
         self._voice_row(sp)
-        self._check(sp, "选中就提前生成语音（右键更快，但流量更大）", "speak_prewarm")
+        self._scale(sp, "语速", "speak_rate", -6, 6, 1, "",
+                    None, fmt=self._rate_text)
+        self._check(sp, "选中就提前生成语音（更快，但流量更大）", "speak_prewarm")
         self._speak_hint = ttk.Label(sp, text="", style="Hint.TLabel",
-                                     wraplength=300, justify="left")
+                                     wraplength=330, justify="left")
         self._speak_hint.pack(anchor="w", pady=(6, 0))
-        ttk.Button(sp, text="打开 Windows 语音设置",
-                   command=self._open_speech_settings).pack(anchor="w", pady=(6, 0))
+        buttons = ttk.Frame(sp)
+        buttons.pack(fill="x", pady=(6, 0))
+        ttk.Button(buttons, text="打开 Windows 语音设置",
+                   command=self._open_speech_settings).pack(side="left")
 
         # ---- 底部按钮 ----
         footer = ttk.Frame(self.win)
-        footer.pack(fill="x", pady=(16, 0))
+        footer.pack(fill="x", pady=(12, 0))
         ttk.Button(footer, text="恢复默认", command=self._reset).pack(side="left")
         ttk.Button(footer, text="关闭", command=self.win.withdraw).pack(side="right")
 
@@ -129,11 +137,21 @@ class SettingsWindow:
     def _center(self):
         width = self.win.winfo_reqwidth()
         height = self.win.winfo_reqheight()
-        screen_w = self.win.winfo_screenwidth()
-        screen_h = self.win.winfo_screenheight()
-        x = (screen_w - width) // 2
-        y = (screen_h - height) // 3
+        left, top, right, bottom = self._work_area()
+        x = left + max(0, (right - left - width) // 2)
+        y = top + max(0, (bottom - top - height) // 3)
         self.win.geometry("+%d+%d" % (x, y))
+
+    def _work_area(self):
+        """屏幕可用区域(去掉任务栏)。取不到就退回整屏。"""
+        try:
+            rect = wintypes.RECT()
+            if ctypes.windll.user32.SystemParametersInfoW(0x0030, 0,
+                                                          ctypes.byref(rect), 0):
+                return rect.left, rect.top, rect.right, rect.bottom
+        except OSError:
+            pass
+        return 0, 0, self.win.winfo_screenwidth(), self.win.winfo_screenheight()
 
     # ------------------------------------------------------------------
 
@@ -141,28 +159,28 @@ class SettingsWindow:
         var = tk.BooleanVar(value=bool(self.settings.get(key)))
         box = ttk.Checkbutton(parent, text=text, variable=var,
                               command=lambda: self._on_check(key, var))
-        box.pack(anchor="w", pady=(0, 6))
+        box.pack(anchor="w", pady=(0, 4))
         self._checks[key] = var
 
-    def _scale(self, parent, text, key, low, high, step, unit, hint=None):
+    def _scale(self, parent, text, key, low, high, step, unit, hint=None, fmt=None):
         row = ttk.Frame(parent)
-        row.pack(fill="x", pady=(10, 0))
-        ttk.Label(row, text=text).pack(side="left")
+        row.pack(fill="x", pady=(8, 0))
+        ttk.Label(row, text=text, width=8, anchor="w").pack(side="left")
         value_label = ttk.Label(row, text="", width=8, anchor="e")
         value_label.pack(side="right")
 
         scale = ttk.Scale(parent, from_=low, to=high, orient="horizontal")
-        scale.pack(fill="x", pady=(3, 0))
+        scale.pack(fill="x", pady=(2, 0))
         scale.configure(command=lambda value: self._on_scale(key, value))
         self._scales[key] = scale
-        self._value_labels[key] = (value_label, step, unit)
+        self._value_labels[key] = (value_label, step, unit, fmt)
 
         if hint:
-            ttk.Label(parent, text=hint, style="Hint.TLabel").pack(anchor="w", pady=(2, 0))
+            ttk.Label(parent, text=hint, style="Hint.TLabel").pack(anchor="w", pady=(1, 0))
 
     def _entry(self, parent, text, key, hint=None, secret=False):
         row = ttk.Frame(parent)
-        row.pack(fill="x", pady=(10, 0))
+        row.pack(fill="x", pady=(8, 0))
         ttk.Label(row, text=text, width=8).pack(side="left")
         var = tk.StringVar(value=str(self.settings.get(key) or ""))
         entry = ttk.Entry(row, textvariable=var, show="*" if secret else "")
@@ -172,12 +190,14 @@ class SettingsWindow:
         entry.bind("<Return>", lambda event, k=key, v=var: self._on_entry(k, v))
         self._entries[key] = var
         if hint:
-            ttk.Label(parent, text=hint, style="Hint.TLabel").pack(anchor="w", pady=(2, 0))
+            ttk.Label(parent, text=hint, style="Hint.TLabel").pack(anchor="w", pady=(1, 0))
         return entry
 
-    def _radio_row(self, parent, key, options):
+    def _radio_row(self, parent, key, options, label=None):
         row = ttk.Frame(parent)
         row.pack(fill="x", pady=(8, 0))
+        if label:
+            ttk.Label(row, text=label, width=8, anchor="w").pack(side="left")
         var = tk.StringVar(value=str(self.settings.get(key)))
         for text, value in options:
             ttk.Radiobutton(row, text=text, value=value, variable=var,
@@ -199,10 +219,17 @@ class SettingsWindow:
         except OSError:
             pass
 
+    @staticmethod
+    def _rate_text(value):
+        value = int(value)
+        if value == 0:
+            return "正常"
+        return ("慢 %d 档" % -value) if value < 0 else ("快 %d 档" % value)
+
     def _voice_row(self, parent):
         row = ttk.Frame(parent)
         row.pack(fill="x", pady=(8, 0))
-        ttk.Label(row, text="英语声音").pack(side="left")
+        ttk.Label(row, text="英语声音", width=8, anchor="w").pack(side="left")
         var = tk.StringVar(value=AUTO_VOICE)
         combo = ttk.Combobox(row, textvariable=var, state="readonly", width=27)
         combo.pack(side="left", padx=(8, 0))
@@ -302,9 +329,12 @@ class SettingsWindow:
         self.on_change(key, self.settings.get(key))
 
     def _show_value(self, key):
-        label, step, unit = self._value_labels[key]
+        label, step, unit, fmt = self._value_labels[key]
         value = self.settings.get(key)
-        text = "%d%s" % (round(value), unit) if step >= 1 else "%.1f%s" % (value, unit)
+        if fmt:
+            text = fmt(value)
+        else:
+            text = "%d%s" % (round(value), unit) if step >= 1 else "%.1f%s" % (value, unit)
         label.configure(text=text)
 
     def refresh(self):

@@ -58,8 +58,8 @@ Add-Type -AssemblyName System.Speech
 $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer
 $synth.SetOutputToNull()
 while (($line = [Console]::In.ReadLine()) -ne $null) {
-  $parts = $line.Split("`t", 3)
-  if ($parts.Length -lt 3) {
+  $parts = $line.Split("`t", 4)
+  if ($parts.Length -lt 4) {
     [Console]::Out.WriteLine("ERR bad request")
     [Console]::Out.Flush()
     continue
@@ -67,7 +67,8 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
   try {
     $synth.SelectVoice($parts[0])
     $synth.SetOutputToWaveFile($parts[1])
-    $synth.Speak($parts[2])
+    $synth.Rate = [int]$parts[2]
+    $synth.Speak($parts[3])
     $synth.SetOutputToNull()
     [Console]::Out.WriteLine("OK")
   } catch {
@@ -154,6 +155,7 @@ class Speech:
         self.offline_voices = {}         # 断网时回落的本地语音 {en: 名称, zh: 名称}
         self.voices = []                 # [(名称, 语言, 是否可用)]
         self.preferred = ""              # 用户指定的英语语音, 空 = 自动挑
+        self.rate = 0                    # 语速档位, -6 ~ +6
         self._proc = None
         self._lock = threading.Lock()
         self._play_lock = threading.Lock()
@@ -264,6 +266,16 @@ class Speech:
                 self.voice_en = picked
                 self.log("朗读英语语音改为: %s" % picked)
 
+    def set_rate(self, rate):
+        """换语速档位。缓存按"语音+语速"分开存, 换档后会自动重新合成。"""
+        try:
+            value = max(-6, min(6, int(rate)))
+        except (TypeError, ValueError):
+            value = 0
+        if value != self.rate:
+            self.rate = value
+            self.log("朗读语速改为 %+d" % value)
+
     def english_voices(self):
         """英语语音列表, 按自动挑选的偏好排序: Ava 排第一个, 老的桌面语音排最后。"""
         pairs = [(name, culture) for name, culture, enabled in self.voices
@@ -301,10 +313,11 @@ class Speech:
             return False
         self._generation += 1
         generation = self._generation
+        rate = self.rate
         # 用户点了新的: 立刻掐掉上一句, 不等它念完
         self._stop_playback()
         self.log("朗读请求: %s" % text[:30])
-        threading.Thread(target=self._speak, args=(text, voice, notify, generation),
+        threading.Thread(target=self._speak, args=(text, voice, notify, generation, rate),
                          daemon=True).start()
         return True
 
@@ -316,33 +329,34 @@ class Speech:
         voice = self.voice_zh if lang == "zh" else self.voice_en
         if not voice:
             return False
-        path = self._cache_path(text, voice)
+        rate = self.rate
+        path = self._cache_path(text, voice, rate)
         if path is None or path.exists():
             return False
         with self._inflight_lock:
             if text in self._inflight:
                 return False
             self._inflight.add(text)
-        threading.Thread(target=self._prewarm_worker, args=(text, voice, path),
+        threading.Thread(target=self._prewarm_worker, args=(text, voice, rate, path),
                          daemon=True).start()
         return True
 
-    def _prewarm_worker(self, text, voice, path):
+    def _prewarm_worker(self, text, voice, rate, path):
         try:
-            self._synthesize(text, voice, path)
+            self._synthesize(text, voice, rate, path)
         finally:
             with self._inflight_lock:
                 self._inflight.discard(text)
 
-    def _speak(self, text, voice, notify, generation):
-        path = self._speak_path(text, voice)
+    def _speak(self, text, voice, notify, generation, rate):
+        path = self._speak_path(text, voice, rate)
         if path is None:
             # 在线语音要联网; 断了就退回系统自带的本地语音
             lang = "zh" if voice == self.voice_zh else "en"
             fallback = self.offline_voices.get(lang, "")
             if fallback and fallback != voice:
                 self.log("在线朗读失败, 回落到本地语音 %s" % fallback)
-                path = self._speak_path(text, fallback)
+                path = self._speak_path(text, fallback, rate)
         if path is None:
             return
         if generation != self._generation:
@@ -357,22 +371,22 @@ class Speech:
             except Exception:
                 pass
 
-    def _speak_path(self, text, voice):
+    def _speak_path(self, text, voice, rate):
         """拿到这句的音频文件: 有缓存直接用, 没有就合成。"""
-        path = self._cache_path(text, voice)
+        path = self._cache_path(text, voice, rate)
         if path is None:
             return None
         if path.exists():
             return path
-        return self._synthesize(text, voice, path)
+        return self._synthesize(text, voice, rate, path)
 
-    def _synthesize(self, text, voice, path):
+    def _synthesize(self, text, voice, rate, path):
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             self.log("朗读缓存目录建不了: %s" % exc)
             return None
-        payload = "%s\t%s\t%s\n" % (voice, str(path), " ".join(text.split()))
+        payload = "%s\t%s\t%d\t%s\n" % (voice, str(path), rate, " ".join(text.split()))
         with self._lock:
             proc = self._ensure_worker()
             if proc is None:
@@ -390,10 +404,10 @@ class Speech:
             return None
         return path if path.exists() else None
 
-    def _cache_path(self, text, voice):
+    def _cache_path(self, text, voice, rate):
         if self.cache_dir is None:
             return None
-        raw = ("%s\x00%s" % (voice, " ".join(text.split()))).encode("utf-8")
+        raw = ("%s\x00%d\x00%s" % (voice, rate, " ".join(text.split()))).encode("utf-8")
         return self.cache_dir / (hashlib.sha1(raw).hexdigest()[:16] + ".wav")
 
     @staticmethod
