@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import hashlib
+import queue
 import subprocess
 import threading
 import time
@@ -181,6 +182,9 @@ class Speech:
         self._playing_key = None         # 正在播的是哪句 (文本, 语种)
         self._pending_key = None         # 正在合成的是哪句
         self._play_end = 0.0             # 这句大概什么时候播完
+        self._play_queue = queue.Queue()
+        threading.Thread(target=self._play_loop, name="speech-play",
+                         daemon=True).start()
         self._inflight_lock = threading.Lock()
         self._inflight = set()           # 正在预热的文本, 避免重复合成
         self._started = False
@@ -337,7 +341,7 @@ class Speech:
 
         # 同一句正在念: 不重来(用户急起来会连点好几次, 机械地念几遍很难受)。
         # 只把"还剩多久"告诉浮窗, 让高亮接着走。
-        if self._playing_key == key:
+        if self._playing and self._playing_key == key:
             left = self._play_end - time.monotonic()
             if left > 0:
                 if notify:
@@ -404,10 +408,11 @@ class Speech:
                 return                  # 用户已经点了别的, 这条就别播了
             duration = _wav_duration_ms(path)
             self.log("朗读播放: %s" % text[:30])
+            # 先立旗子(播放线程若失败会自己清掉), 这样紧接着的重复点击能被挡住
+            self._playing = True
+            self._playing_key = key
+            self._play_end = time.monotonic() + duration / 1000.0
             self._play(path)
-            if self._playing:
-                self._playing_key = key
-                self._play_end = time.monotonic() + duration / 1000.0
             if notify:
                 try:
                     notify(duration)
@@ -486,28 +491,52 @@ class Speech:
         _mci("stop all")
         _mci("close all")
 
-    def _play(self, path):
-        """播放一个 wav。要换句时先显式停掉上一句——两句同时响是没人想要的。"""
-        with self._play_lock:
-            self._stop_locked()
-            err = _mci('open "%s" type waveaudio alias %s' % (path, PLAY_ALIAS))
-            if err == 0:
-                err = _mci("play %s" % PLAY_ALIAS)
-                if err == 0:
-                    self._playing = True
+    def _play_loop(self):
+        """所有 MCI 调用都从这一个线程发出。
+
+        MCI 的音频设备是"谁打开谁拥有": 在另一个线程里喊 stop all / close all
+        停不掉别的线程开的设备, 结果就是"旧的一句还在响, 新的一句叠上去"。
+        所以把开关都放在同一个线程里做, 只在队列里留最新的一条。
+        """
+        while True:
+            action, path = self._play_queue.get()
+            if action == "quit":
+                return
+            # 排队的旧命令一律丢掉, 只执行最新的一条
+            while True:
+                try:
+                    action, path = self._play_queue.get_nowait()
+                except queue.Empty:
+                    break
+                if action == "quit":
                     return
-            self._playing = False
-            self.log("播放失败: MCI 错误码 %d" % err)
+            with self._play_lock:
+                self._stop_locked()
+                if action != "play":
+                    continue
+                err = _mci('open "%s" type waveaudio alias %s' % (path, PLAY_ALIAS))
+                if err == 0:
+                    err = _mci("play %s" % PLAY_ALIAS)
+                    if err == 0:
+                        self._playing = True
+                        continue
+                self._playing = False
+                self._playing_key = None
+                self.log("播放失败: MCI 错误码 %d" % err)
+
+    def _play(self, path):
+        """交给播放线程, 别在这里直接碰 MCI。"""
+        self._play_queue.put(("play", str(path)))
 
     def _stop_playback(self):
         with self._play_lock:
-            # 已经自然播完的就不算"被打断"了, 日志别骗人
             if self._playing and time.monotonic() < self._play_end:
                 self.log("朗读打断: 停掉正在播的那句")
-            self._stop_locked()
             self._playing = False
             self._playing_key = None
             self._play_end = 0.0
+        # 真正的 stop/close 交给播放线程, 保证和 open/play 是同一个人干的
+        self._play_queue.put(("stop", None))
 
     def stop(self):
         self._generation += 1           # 让还没合成完的请求作废
@@ -518,6 +547,7 @@ class Speech:
     def close(self):
         self._closed = True
         self.stop()
+        self._play_queue.put(("quit", None))
         proc, self._proc = self._proc, None
         self.available = False
         if proc is None:
