@@ -203,7 +203,7 @@ class SettingsWindow:
         row.pack(fill="x", pady=(8, 0))
         ttk.Label(row, text="英语声音").pack(side="left")
         var = tk.StringVar(value=AUTO_VOICE)
-        combo = ttk.Combobox(row, textvariable=var, state="readonly", width=24)
+        combo = ttk.Combobox(row, textvariable=var, state="readonly", width=27)
         combo.pack(side="left", padx=(8, 0))
         combo.bind("<<ComboboxSelected>>", lambda event: self._on_voice(var.get()))
         self._voice_combo = combo

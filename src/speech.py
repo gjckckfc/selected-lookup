@@ -242,8 +242,11 @@ class Speech:
                 self.log("朗读英语语音改为: %s" % picked)
 
     def english_voices(self):
-        return [name for name, culture, enabled in self.voices
-                if enabled and (culture or "").lower().startswith("en")]
+        """英语语音列表, 按自动挑选的偏好排序: Ava 排第一个, 老的桌面语音排最后。"""
+        pairs = [(name, culture) for name, culture, enabled in self.voices
+                 if enabled and (culture or "").lower().startswith("en")]
+        pairs.sort(key=lambda item: _voice_rank(item[0], item[1], "en"))
+        return [name for name, _culture in pairs]
 
     @staticmethod
     def _list_voices():
