@@ -416,10 +416,10 @@ class Popup:
     def _origin_area(self, text):
         self._origin_full = text
         self._origin_expanded = False
-        # 原文单独占一整行, 不跟右上角的按钮挤在标题行里,
-        # 这样它才能和下面的释义同宽, 不会显得窄一截。
-        holder = tk.Frame(self.header_frame, bg=CARD_BG)
-        holder.pack(fill="x", pady=(7, 0), padx=7)
+        # 原文放进可滚动区, 和译文、单词块是同一页:
+        # 滚轮滚的是整页, 而且原文再长也顶不破高度上限。
+        holder = tk.Frame(self.inner, bg=CARD_BG)
+        holder.pack(fill="x", pady=(0, 4), padx=7)
         label = tk.Label(holder, text="", bg=CARD_BG, fg=NOTE_FG, justify="left",
                          anchor="w", wraplength=self.inner_width - 14,
                          font=(FONT_FAMILY, 9))
@@ -439,6 +439,7 @@ class Popup:
         link.bind("<Enter>", lambda event: link.configure(fg=TITLE_FG))
         link.bind("<Leave>", lambda event: link.configure(fg=LINK_FG))
         self._apply_origin()
+        return ["【原文】%s" % text, ""]
 
     def _apply_origin(self):
         text = self._origin_full
@@ -560,6 +561,8 @@ class Popup:
     def _render(self, result, translation=None, pending=False, failed=False):
         self._clear()
         self._clipboard_text = ""
+        # 原文必须先放, 它和译文、单词块同属一个滚动区
+        origin_lines = self._origin_area(result.query) if result.kind == "breakdown" else []
         lead = self._leading(translation, pending, failed)
 
         if result.kind == "miss":
@@ -608,8 +611,7 @@ class Popup:
 
         # breakdown: 整串没查到, 退回逐词
         self._header("逐词释义", "整串没有词条，下面按词拆开")
-        self._origin_area(result.query)
-        all_lines = lead + ["【原文】%s" % result.query, ""]
+        all_lines = origin_lines + lead
         for entry, matched, token in result.parts:
             head = "%s -> %s" % (token, entry.word) if matched else token
             body = (entry.translation or entry.definition)[:MAX_DEF_LINES]
