@@ -178,6 +178,9 @@ class Speech:
         self._lock = threading.Lock()
         self._play_lock = threading.Lock()
         self._playing = False
+        self._playing_key = None         # 正在播的是哪句 (文本, 语种)
+        self._pending_key = None         # 正在合成的是哪句
+        self._play_end = 0.0             # 这句大概什么时候播完
         self._inflight_lock = threading.Lock()
         self._inflight = set()           # 正在预热的文本, 避免重复合成
         self._started = False
@@ -329,13 +332,30 @@ class Speech:
         voice = self.voice_zh if lang == "zh" else self.voice_en
         if not voice:
             return False
+        text = " ".join(text.split())
+        key = (text, lang)
+
+        # 同一句正在念: 不重来(用户急起来会连点好几次, 机械地念几遍很难受)。
+        # 只把"还剩多久"告诉浮窗, 让高亮接着走。
+        if self._playing_key == key:
+            left = self._play_end - time.monotonic()
+            if left > 0:
+                if notify:
+                    notify(int(left * 1000))
+                return True
+        # 同一句正在合成: 也别重复排队
+        if self._pending_key == key:
+            return True
+
         self._generation += 1
         generation = self._generation
         rate = self.rate
         # 用户点了新的: 立刻掐掉上一句, 不等它念完
         self._stop_playback()
+        self._pending_key = key
         self.log("朗读请求: %s" % text[:30])
-        threading.Thread(target=self._speak, args=(text, voice, notify, generation, rate),
+        threading.Thread(target=self._speak,
+                         args=(text, voice, notify, generation, rate, key),
                          daemon=True).start()
         return True
 
@@ -367,28 +387,35 @@ class Speech:
             with self._inflight_lock:
                 self._inflight.discard(key)
 
-    def _speak(self, text, voice, notify, generation, rate):
-        path = self._speak_path(text, voice, rate)
-        if path is None:
-            # 在线语音要联网; 断了就退回系统自带的本地语音
-            lang = "zh" if voice == self.voice_zh else "en"
-            fallback = self.offline_voices.get(lang, "")
-            if fallback and fallback != voice:
-                self.log("在线朗读失败, 回落到本地语音 %s" % fallback)
-                path = self._speak_path(text, fallback, rate)
-        if path is None:
-            return
-        if generation != self._generation:
-            self.log("朗读丢弃(已过期): %s" % text[:30])
-            return                      # 用户已经点了别的, 这条就别播了
-        duration = _wav_duration_ms(path)
-        self.log("朗读播放: %s" % text[:30])
-        self._play(path)
-        if notify:
-            try:
-                notify(duration)
-            except Exception:
-                pass
+    def _speak(self, text, voice, notify, generation, rate, key):
+        try:
+            path = self._speak_path(text, voice, rate)
+            if path is None:
+                # 在线语音要联网; 断了就退回系统自带的本地语音
+                lang = "zh" if voice == self.voice_zh else "en"
+                fallback = self.offline_voices.get(lang, "")
+                if fallback and fallback != voice:
+                    self.log("在线朗读失败, 回落到本地语音 %s" % fallback)
+                    path = self._speak_path(text, fallback, rate)
+            if path is None:
+                return
+            if generation != self._generation:
+                self.log("朗读丢弃(已过期): %s" % text[:30])
+                return                  # 用户已经点了别的, 这条就别播了
+            duration = _wav_duration_ms(path)
+            self.log("朗读播放: %s" % text[:30])
+            self._play(path)
+            if self._playing:
+                self._playing_key = key
+                self._play_end = time.monotonic() + duration / 1000.0
+            if notify:
+                try:
+                    notify(duration)
+                except Exception:
+                    pass
+        finally:
+            if self._pending_key == key:
+                self._pending_key = None
 
     def _speak_path(self, text, voice, rate):
         """拿到这句的音频文件: 有缓存直接用, 没有就合成。"""
@@ -474,10 +501,13 @@ class Speech:
 
     def _stop_playback(self):
         with self._play_lock:
-            if self._playing:
+            # 已经自然播完的就不算"被打断"了, 日志别骗人
+            if self._playing and time.monotonic() < self._play_end:
                 self.log("朗读打断: 停掉正在播的那句")
             self._stop_locked()
             self._playing = False
+            self._playing_key = None
+            self._play_end = 0.0
 
     def stop(self):
         self._generation += 1           # 让还没合成完的请求作废
