@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import os
 import queue
 import sys
 import threading
@@ -23,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from capture import MOD_ALT, MOD_CONTROL, SelectionWatcher  # noqa: E402
 from dictionary import Dictionary  # noqa: E402
+from notebook import Notebook  # noqa: E402
 from popup import Popup  # noqa: E402
 from settings_ui import SettingsWindow  # noqa: E402
 from tray import TrayIcon  # noqa: E402
@@ -35,7 +37,8 @@ HOTKEYS = [
 
 
 class App:
-    def __init__(self, db_path, index_path=None, settings=None, log_path=None):
+    def __init__(self, db_path, index_path=None, settings=None, log_path=None,
+                 notebook_dir=None):
         self.log_path = Path(log_path) if log_path else None
         self.settings_path = Path(settings) if settings else None
         if self.settings_path:
@@ -63,6 +66,12 @@ class App:
         self.commands = queue.Queue()
         self.enabled = bool(self.settings.get("enabled"))
 
+        self.notebook = Notebook(
+            notebook_dir or (Path(__file__).resolve().parent.parent / "vocabulary"),
+            logger=self.log,
+            enabled=bool(self.settings.get("notebook_enabled")),
+        )
+
         self.watcher = SelectionWatcher(
             on_selection=self._on_selection,
             on_dismiss=lambda: self.commands.put("hide"),
@@ -75,7 +84,10 @@ class App:
 
         self.tray = TrayIcon(
             enabled=self.enabled,
+            notebook_enabled=self.notebook.enabled,
             on_toggle=lambda: self.commands.put("toggle"),
+            on_notebook_toggle=lambda: self.commands.put("notebook_toggle"),
+            on_notebook_open=lambda: self.commands.put("notebook_open"),
             on_settings=lambda: self.commands.put("settings"),
             on_quit=lambda: self.commands.put("quit"),
             logger=self.log,
@@ -177,9 +189,28 @@ class App:
             self._reload_translator()
         self.log("设置 %s = %s" % (key, value))
 
+    def _toggle_notebook(self):
+        value = not bool(self.settings.get("notebook_enabled"))
+        self.settings.set("notebook_enabled", value)
+        self.notebook.set_enabled(value)
+        self.tray.set_notebook_enabled(value)
+        self.log("生词本自动收录 %s" % ("开启" if value else "关闭"))
+
+    def _open_notebook(self):
+        try:
+            self.notebook.ensure_folder()
+            # 用户可能刚从别处导入过文件, 重建一次索引再打开
+            self.notebook.refresh()
+            os.startfile(str(self.notebook.folder))
+        except OSError as exc:
+            self.log("打开生词本失败: %s" % exc)
+
     def _apply_all_settings(self):
         self.watcher.drag_threshold = self.settings.get("drag_threshold")
         self.popup.apply_settings(hide_after=self.settings.get("hide_after"))
+        note_on = bool(self.settings.get("notebook_enabled"))
+        self.notebook.set_enabled(note_on)
+        self.tray.set_notebook_enabled(note_on)
         want = bool(self.settings.get("enabled"))
         if want != self.enabled:
             self._toggle()
@@ -201,6 +232,10 @@ class App:
                     return
                 if command in ("toggle", "pause"):
                     self._toggle()
+                elif command == "notebook_toggle":
+                    self._toggle_notebook()
+                elif command == "notebook_open":
+                    self._open_notebook()
                 elif command == "hide":
                     self.popup.hide()
                 elif command == "settings":
@@ -220,6 +255,7 @@ class App:
                     continue
                 if translation:
                     self.popup.update_translation(result, translation=translation)
+                    self.notebook.record(result, translation=translation, count=False)
                 else:
                     self.popup.update_translation(result, failed=True)
         except queue.Empty:
@@ -241,12 +277,15 @@ class App:
                 if cached:
                     self.log("译文命中缓存")
                     self.popup.show(result, x, y, translation=cached)
+                    self.notebook.record(result, translation=cached)
                 elif self._translate_ready() and self._looks_like_sentence(text):
                     self.popup.show(result, x, y, pending=True)
+                    self.notebook.record(result)
                     threading.Thread(target=self._do_translate,
                                      args=(seq, text, result), daemon=True).start()
                 else:
                     self.popup.show(result, x, y)
+                    self.notebook.record(result)
         except queue.Empty:
             pass
         self.root.after(25, self._pump)
@@ -264,6 +303,12 @@ class App:
         self.log("启动, 词条 %s, 词形 %s, 设置 %s" % (
             format(stats["entries"], ","), format(stats["forms"], ","),
             self.settings_path or "(默认)"))
+        if self.notebook.enabled:
+            note = self.notebook.stats()
+            self.log("生词本: %d 天 / %d 条  %s" % (
+                note["files"], note["entries"], self.notebook.folder))
+        else:
+            self.log("生词本自动收录已关闭")
         if self._translate_ready():
             self.log("整句翻译已启用: %s / %s, 缓存 %d 条" % (
                 self.translator.base_url, self.translator.model,

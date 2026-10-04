@@ -28,6 +28,8 @@ def main(argv=None):
     parser.add_argument("--settings", default=str(ROOT / "settings.json"),
                         help="设置文件路径")
     parser.add_argument("--log", default=str(ROOT / "logs" / "app.log"))
+    parser.add_argument("--notebook", default=str(ROOT / "vocabulary"),
+                        help="生词本目录")
     args = parser.parse_args(argv)
 
     index = args.index
@@ -41,6 +43,7 @@ def main(argv=None):
         index_path=index,
         settings=args.settings,
         log_path=args.log,
+        notebook_dir=args.notebook,
     )
     app.run()
     return 0

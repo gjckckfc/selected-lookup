@@ -42,6 +42,8 @@ TPM_RETURNCMD = 0x0100
 ID_TOGGLE = 1001
 ID_SETTINGS = 1003
 ID_QUIT = 1002
+ID_NOTEBOOK_TOGGLE = 1004
+ID_NOTEBOOK_OPEN = 1005
 
 CALLBACK_MESSAGE = WM_APP + 1
 ICON_SIZE = 32
@@ -156,11 +158,16 @@ class TrayIcon:
     """托盘图标。左键单击 / 双击切换开关, 右键出菜单。"""
 
     def __init__(self, enabled=True, on_toggle=None, on_quit=None,
-                 on_settings=None, tip="选中即查", logger=None):
+                 on_settings=None, notebook_enabled=True,
+                 on_notebook_toggle=None, on_notebook_open=None,
+                 tip="选中即查", logger=None):
         self.enabled = enabled
+        self.notebook_enabled = bool(notebook_enabled)
         self.on_toggle = on_toggle
         self.on_quit = on_quit
         self.on_settings = on_settings
+        self.on_notebook_toggle = on_notebook_toggle
+        self.on_notebook_open = on_notebook_open
         self.tip = tip
         self.log = logger or (lambda message: None)
 
@@ -204,7 +211,10 @@ class TrayIcon:
         menu = user32.CreatePopupMenu()
         flags = MF_STRING | (MF_CHECKED if self.enabled else 0)
         user32.AppendMenuW(menu, flags, ID_TOGGLE, "启用取词")
+        note_flags = MF_STRING | (MF_CHECKED if self.notebook_enabled else 0)
+        user32.AppendMenuW(menu, note_flags, ID_NOTEBOOK_TOGGLE, "自动收录到生词本")
         user32.AppendMenuW(menu, MF_SEPARATOR, 0, None)
+        user32.AppendMenuW(menu, MF_STRING, ID_NOTEBOOK_OPEN, "打开生词本")
         user32.AppendMenuW(menu, MF_STRING, ID_SETTINGS, "设置...")
         user32.AppendMenuW(menu, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(menu, MF_STRING, ID_QUIT, "退出")
@@ -220,18 +230,23 @@ class TrayIcon:
 
         if choice == ID_TOGGLE:
             self._fire_toggle()
+        elif choice == ID_NOTEBOOK_TOGGLE:
+            self._fire("on_notebook_toggle", "tray notebook toggle error")
+        elif choice == ID_NOTEBOOK_OPEN:
+            self._fire("on_notebook_open", "tray notebook open error")
         elif choice == ID_SETTINGS:
-            if self.on_settings:
-                try:
-                    self.on_settings()
-                except Exception as exc:
-                    self.log("tray settings error: %s" % exc)
+            self._fire("on_settings", "tray settings error")
         elif choice == ID_QUIT:
-            if self.on_quit:
-                try:
-                    self.on_quit()
-                except Exception as exc:
-                    self.log("tray quit error: %s" % exc)
+            self._fire("on_quit", "tray quit error")
+
+    def _fire(self, name, message):
+        callback = getattr(self, name, None)
+        if callback is None:
+            return
+        try:
+            callback()
+        except Exception as exc:
+            self.log("%s: %s" % (message, exc))
 
     # ------------------------------------------------------------------
 
@@ -257,6 +272,10 @@ class TrayIcon:
         self._nid.hIcon = self._icons[self.enabled]
         self._nid.szTip = self._tip_text()
         shell32.Shell_NotifyIconW(NIM_MODIFY, ctypes.byref(self._nid))
+
+    def set_notebook_enabled(self, enabled):
+        """只影响右键菜单里的勾选状态。"""
+        self.notebook_enabled = bool(enabled)
 
     def run(self):
         """阻塞运行消息循环。请放在独立线程里。"""

@@ -12,6 +12,8 @@ DEFAULTS = {
     "enabled": True,          # 启动时是否开启取词
     "drag_threshold": 6,      # 判定为拖选的像素阈值
     "hide_after": 5.0,        # 浮窗最长停留秒数, 取消选中会立刻收起
+    # --- 生词本（本地 Markdown 沉淀，不联网）---
+    "notebook_enabled": True,  # 选中即自动收录进 vocabulary/raw/
     # --- 整句翻译（走用户自己的 API 密钥）---
     "translate_enabled": False,
     "api_key": "",

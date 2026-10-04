@@ -19,5 +19,10 @@ desktop.ini
 # 运行时日志
 logs/
 
+# 生词本（用户数据不入库; vocabulary/README.md 是格式说明, 保留）
+vocabulary/raw/
+vocabulary/curated/
+vocabulary/*.tmp
+
 # 个人设置
 settings.json
