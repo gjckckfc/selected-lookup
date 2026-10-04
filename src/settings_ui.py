@@ -37,6 +37,7 @@ class SettingsWindow:
         self._entries = {}
         self._voice_combo = None
         self._voice_var = None
+        self._top_var = None
         self._test_queue = queue.Queue()
         self._testing = False
 
@@ -73,6 +74,11 @@ class SettingsWindow:
         ttk.Label(head, text="设置", style="Title.TLabel").pack(side="left")
         ttk.Label(head, text="改完立即生效，自动保存", style="Hint.TLabel").pack(
             side="left", padx=(10, 0), pady=(4, 0))
+        top_var = tk.BooleanVar(value=bool(self.settings.get("ui_topmost")))
+        ttk.Checkbutton(head, text="置顶", variable=top_var,
+                        command=lambda v=top_var: self._set_topmost(v.get())
+                        ).pack(side="right", pady=(4, 0))
+        self._top_var = top_var
 
         # ---- 取词 ----
         group = ttk.LabelFrame(self.win, text="取词", padding=10, style="Group.TLabelframe")
@@ -129,10 +135,22 @@ class SettingsWindow:
 
         self.refresh()
         self.win.update_idletasks()
+        self._set_topmost(bool(self.settings.get("ui_topmost")))
         self._center()
         self.win.lift()
         self.win.focus_force()
         self._poll_queue()
+
+    def _set_topmost(self, on):
+        try:
+            self.win.attributes("-topmost", bool(on))
+        except tk.TclError:
+            pass
+        if self._top_var is not None and bool(self._top_var.get()) != bool(on):
+            self._top_var.set(bool(on))
+        if self._loading:
+            return
+        self.settings.set("ui_topmost", bool(on))
 
     def _center(self):
         width = self.win.winfo_reqwidth()
