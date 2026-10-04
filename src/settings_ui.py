@@ -81,7 +81,7 @@ class SettingsWindow:
                     "OpenAI 兼容地址，例如 https://api.deepseek.com/v1")
         self._entry(tr, "API 密钥", "api_key", "明文存在 settings.json 里", secret=True)
         self._entry(tr, "模型名", "model",
-                    "建议用非推理模型（如 deepseek-chat），推理模型会多花思考 token")
+                    "建议用非推理模型（如 deepseek-flash），推理模型会多花思考 token")
         test_row = ttk.Frame(tr)
         test_row.pack(fill="x", pady=(10, 0))
         ttk.Button(test_row, text="测试连接", command=self._test).pack(side="left")

@@ -16,7 +16,7 @@ DEFAULTS = {
     "translate_enabled": False,
     "api_base": "https://api.deepseek.com/v1",
     "api_key": "",
-    "model": "deepseek-chat",
+    "model": "deepseek-flash",
 }
 
 # 字符串型设置, 不做数值夹取
