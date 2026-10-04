@@ -368,7 +368,12 @@ class Popup:
         return label
 
     def _header(self, title, subtitle=None, small_title=False):
-        box = tk.Frame(self.header_frame, bg=CARD_BG)
+        # 标题行单独一个容器, 这样后面加进来的原文区才会落在它下面,
+        # 而不是被塞进"标题和按钮之间的空隙"。
+        top = tk.Frame(self.header_frame, bg=CARD_BG)
+        # 和下面的释义块对齐: 那些块自带 7px 内边距, 标题行也缩进同样的量
+        top.pack(fill="x", padx=7)
+        box = tk.Frame(top, bg=CARD_BG)
         box.pack(side="left", fill="x", expand=True)
         self._header_box = box
         self._title_label = tk.Label(
@@ -383,7 +388,7 @@ class Popup:
                                         font=(FONT_FAMILY, 8))
         if subtitle:
             self._subtitle_label.pack(anchor="w", pady=(3, 0))
-        button = tk.Button(self.header_frame, text="复制全部", command=self._copy_all,
+        button = tk.Button(top, text="复制全部", command=self._copy_all,
                            bg=BUTTON_BG, fg=BUTTON_FG, activebackground=BUTTON_ACTIVE,
                            activeforeground=TITLE_FG, relief="flat", bd=0,
                            highlightthickness=0, font=(FONT_FAMILY, 8),
@@ -411,12 +416,14 @@ class Popup:
     def _origin_area(self, text):
         self._origin_full = text
         self._origin_expanded = False
-        holder = tk.Frame(self._header_box, bg=CARD_BG)
-        holder.pack(anchor="w", fill="x", pady=(4, 0))
+        # 原文单独占一整行, 不跟右上角的按钮挤在标题行里,
+        # 这样它才能和下面的释义同宽, 不会显得窄一截。
+        holder = tk.Frame(self.header_frame, bg=CARD_BG)
+        holder.pack(fill="x", pady=(7, 0), padx=7)
         label = tk.Label(holder, text="", bg=CARD_BG, fg=NOTE_FG, justify="left",
-                         anchor="w", wraplength=self.inner_width - 78,
+                         anchor="w", wraplength=self.inner_width - 14,
                          font=(FONT_FAMILY, 9))
-        label.pack(anchor="w")
+        label.pack(fill="x")
         link = tk.Label(holder, text="展开全文", bg=CARD_BG, fg=LINK_FG,
                         font=(FONT_FAMILY, 8), cursor="hand2")
         self._origin_holder = holder
@@ -440,7 +447,7 @@ class Popup:
             self._origin_link.configure(text="收起")
             self._origin_link.pack(anchor="w", pady=(2, 0))
             return
-        lines = self._wrap_lines(text, self._small_font, self.inner_width - 84)
+        lines = self._wrap_lines(text, self._small_font, self.inner_width - 18)
         if len(lines) > MAX_ORIGIN_LINES:
             shown = "\n".join(lines[:MAX_ORIGIN_LINES]) + " …"
             self._origin_label.configure(text=shown)
