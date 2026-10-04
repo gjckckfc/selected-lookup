@@ -62,26 +62,42 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
 '''
 
 
-def _pick_voice(voices, lang):
-    """从语音列表里挑一个: 优先自然语音, 其次对应语言的默认语音。"""
-    best = ""
-    best_score = None
-    for name, culture, enabled in voices:
-        if not enabled:
-            continue
-        low_name = name.lower()
-        low_culture = (culture or "").lower()
-        # 带 Online 的是云端语音, 要联网, 不算本地能力
-        if "online" in low_name or not low_culture.startswith(lang):
-            continue
-        score = 0
-        if "natural" in low_name:
-            score -= 10
-        if low_culture == ("en-us" if lang == "en" else "zh-cn"):
-            score -= 2
-        if best_score is None or score < best_score:
-            best, best_score = name, score
-    return best
+# 自动挑声音时的偏好顺序(越靠前越优先), 挑不到就按名字排
+EN_PREFERRED = ("ava", "emma", "aria", "jenny", "michelle", "ana",
+                "guy", "andrew", "brian", "christopher", "eric",
+                "roger", "steffan")
+ZH_PREFERRED = ("xiaoxiao", "xiaoyi", "yunxi", "yunjian",
+                "yunxia", "yunyang", "xiaobei", "xiaoni")
+
+
+def _voice_rank(name, culture, lang):
+    """给一个语音打分, 越小越优先。"""
+    low_name = name.lower()
+    low_culture = (culture or "").lower()
+    exact = 0 if low_culture == ("en-us" if lang == "en" else "zh-cn") else 1
+    # 老一代 SAPI 桌面语音(比如 Zira)"念稿感"重, 排最后
+    legacy = 1 if "desktop" in low_name else 0
+    # 神经网络语音(名字里带 Online/Natural)优先
+    neural = 0 if ("online" in low_name or "natural" in low_name) else 1
+    order = EN_PREFERRED if lang == "en" else ZH_PREFERRED
+    pref = len(order) + 1
+    for index, key in enumerate(order):
+        if key in low_name:
+            pref = index
+            break
+    return (legacy, neural, exact, pref, low_name)
+
+
+def _pick_voice(voices, lang, prefer=""):
+    """从语音列表里挑一个。prefer 是用户指定的语音名, 空则自动挑。"""
+    usable = [v for v in voices if v[2] and (v[1] or "").lower().startswith(lang)]
+    if prefer:
+        for name, _culture, enabled in voices:
+            if enabled and name == prefer:
+                return name
+    if not usable:
+        return ""
+    return min(usable, key=lambda v: _voice_rank(v[0], v[1], lang))[0]
 
 
 def _wav_duration_ms(path):
@@ -118,11 +134,15 @@ class Speech:
         self.available = False
         self.voice_en = ""
         self.voice_zh = ""
+        self.offline_voices = {}         # 断网时回落的本地语音 {en: 名称, zh: 名称}
+        self.voices = []                 # [(名称, 语言, 是否可用)]
+        self.preferred = ""              # 用户指定的英语语音, 空 = 自动挑
         self._proc = None
         self._lock = threading.Lock()
         self._started = False
         self._closed = False
         self._last_used = 0.0
+        self._generation = 0
         self.preparing = False
 
     # ------------------------------------------------------------------
@@ -148,8 +168,12 @@ class Speech:
         if not voices:
             self.log("朗读不可用: 读不到系统语音列表")
             return
-        self.voice_en = _pick_voice(voices, "en")
+        self.voices = voices
+        self.voice_en = _pick_voice(voices, "en", self.preferred)
         self.voice_zh = _pick_voice(voices, "zh")
+        local = [v for v in voices if "online" not in v[0].lower()]
+        self.offline_voices = {"en": _pick_voice(local, "en"),
+                               "zh": _pick_voice(local, "zh")}
         if not self.voice_en:
             self.log("朗读不可用: 系统里没有英语语音 (可用语音 %d 个)" % len(voices))
             return
@@ -208,6 +232,19 @@ class Speech:
         else:
             self.stop()
 
+    def set_preferred(self, name):
+        """换一个英语语音(设置面板里选的)。"""
+        self.preferred = (name or "").strip()
+        if self.voices:
+            picked = _pick_voice(self.voices, "en", self.preferred)
+            if picked and picked != self.voice_en:
+                self.voice_en = picked
+                self.log("朗读英语语音改为: %s" % picked)
+
+    def english_voices(self):
+        return [name for name, culture, enabled in self.voices
+                if enabled and (culture or "").lower().startswith("en")]
+
     @staticmethod
     def _list_voices():
         try:
@@ -236,18 +273,25 @@ class Speech:
         voice = self.voice_zh if lang == "zh" else self.voice_en
         if not voice:
             return False
-        threading.Thread(target=self._speak, args=(text, voice, notify),
+        self._generation += 1
+        generation = self._generation
+        threading.Thread(target=self._speak, args=(text, voice, notify, generation),
                          daemon=True).start()
         return True
 
-    def _speak(self, text, voice, notify):
-        path = self._cache_path(text, voice)
+    def _speak(self, text, voice, notify, generation):
+        path = self._speak_path(text, voice)
+        if path is None:
+            # 在线语音要联网; 断了就退回系统自带的本地语音
+            lang = "zh" if voice == self.voice_zh else "en"
+            fallback = self.offline_voices.get(lang, "")
+            if fallback and fallback != voice:
+                self.log("在线朗读失败, 回落到本地语音 %s" % fallback)
+                path = self._speak_path(text, fallback)
         if path is None:
             return
-        if not path.exists():
-            path = self._synthesize(text, voice, path)
-            if path is None:
-                return
+        if generation != self._generation:
+            return                      # 用户已经点了别的, 这条就别播了
         duration = _wav_duration_ms(path)
         self._play(path)
         if notify:
@@ -255,6 +299,15 @@ class Speech:
                 notify(duration)
             except Exception:
                 pass
+
+    def _speak_path(self, text, voice):
+        """拿到这句的音频文件: 有缓存直接用, 没有就合成。"""
+        path = self._cache_path(text, voice)
+        if path is None:
+            return None
+        if path.exists():
+            return path
+        return self._synthesize(text, voice, path)
 
     def _synthesize(self, text, voice, path):
         try:
@@ -295,6 +348,7 @@ class Speech:
             pass
 
     def stop(self):
+        self._generation += 1           # 让还没合成完的请求作废
         try:
             winsound.PlaySound(None, winsound.SND_PURGE)
         except RuntimeError:

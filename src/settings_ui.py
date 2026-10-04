@@ -14,6 +14,7 @@ from tkinter import ttk
 
 FONT = ("Microsoft YaHei UI", 9)
 TITLE_FONT = ("Microsoft YaHei UI", 11, "bold")
+AUTO_VOICE = "自动（推荐）"
 
 
 class SettingsWindow:
@@ -24,6 +25,7 @@ class SettingsWindow:
         self.on_reset = on_reset
         self.on_test_translate = None
         self.on_speech_info = None
+        self.on_voice_list = None
         self.win = None
         self._loading = False
         self._scales = {}
@@ -31,6 +33,8 @@ class SettingsWindow:
         self._checks = {}
         self._radios = {}
         self._entries = {}
+        self._voice_combo = None
+        self._voice_var = None
         self._test_queue = queue.Queue()
         self._testing = False
 
@@ -101,6 +105,7 @@ class SettingsWindow:
         self._check(sp, "启用右键朗读（右键浮窗里的词或句子就念出来）", "speak_enabled")
         self._radio_row(sp, "speak_mode",
                         (("只读英文", "en"), ("中英都读", "both")))
+        self._voice_row(sp)
         self._speak_hint = ttk.Label(sp, text="", style="Hint.TLabel",
                                      wraplength=300, justify="left")
         self._speak_hint.pack(anchor="w", pady=(6, 0))
@@ -193,6 +198,35 @@ class SettingsWindow:
         except OSError:
             pass
 
+    def _voice_row(self, parent):
+        row = ttk.Frame(parent)
+        row.pack(fill="x", pady=(8, 0))
+        ttk.Label(row, text="英语声音").pack(side="left")
+        var = tk.StringVar(value=AUTO_VOICE)
+        combo = ttk.Combobox(row, textvariable=var, state="readonly", width=24)
+        combo.pack(side="left", padx=(8, 0))
+        combo.bind("<<ComboboxSelected>>", lambda event: self._on_voice(var.get()))
+        self._voice_combo = combo
+        self._voice_var = var
+
+    def _on_voice(self, choice):
+        if self._loading or not self._voice_var:
+            return
+        value = "" if choice == AUTO_VOICE else choice
+        self.settings.set("speak_voice", value)
+        self.on_change("speak_voice", value)
+        if self._speak_hint is not None and self.on_speech_info:
+            self._speak_hint.configure(text=self.on_speech_info())
+
+    def _fill_voices(self):
+        if self._voice_combo is None or self._voice_var is None:
+            return
+        names = list(self.on_voice_list()) if self.on_voice_list else []
+        values = [AUTO_VOICE] + names
+        self._voice_combo.configure(values=values)
+        current = self.settings.get("speak_voice") or AUTO_VOICE
+        self._voice_var.set(current if current in values else AUTO_VOICE)
+
     def _on_entry(self, key, var):
         if self._loading:
             return
@@ -284,6 +318,7 @@ class SettingsWindow:
                 self._show_value(key)
             for key, var in self._radios.items():
                 var.set(str(self.settings.get(key)))
+            self._fill_voices()
             for key, var in self._entries.items():
                 var.set(str(self.settings.get(key) or ""))
             if self._speak_hint is not None and self.on_speech_info:

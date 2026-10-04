@@ -17,6 +17,7 @@ DEFAULTS = {
     # --- 朗读（用系统自带语音，不联网）---
     "speak_enabled": True,     # 右键朗读
     "speak_mode": "en",        # en = 只读英文; both = 中英都读
+    "speak_voice": "",         # 英语用哪个声音; 空 = 自动挑
     # --- 整句翻译（走用户自己的 API 密钥）---
     "translate_enabled": False,
     "api_key": "",
@@ -24,7 +25,7 @@ DEFAULTS = {
 }
 
 # 字符串型设置, 不做数值夹取
-STR_KEYS = {"api_key", "model", "speak_mode"}
+STR_KEYS = {"api_key", "model", "speak_mode", "speak_voice"}
 
 # 只能取固定几个值的字符串设置
 CHOICES = {

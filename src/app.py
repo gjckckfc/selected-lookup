@@ -68,6 +68,7 @@ class App:
             logger=self.log,
             enabled=bool(self.settings.get("speak_enabled")),
         )
+        self.speech.preferred = str(self.settings.get("speak_voice") or "")
         self.popup = Popup(
             self.root,
             hide_after=self.settings.get("hide_after"),
@@ -112,6 +113,7 @@ class App:
         )
         self.settings_window.on_test_translate = self._test_translate
         self.settings_window.on_speech_info = self._speech_info
+        self.settings_window.on_voice_list = self.speech.english_voices
 
     # ------------------------------------------------------------------
     # 朗读
@@ -238,6 +240,10 @@ class App:
         if key == "speak_mode":
             self.log("朗读模式 = %s" % value)
             return
+        if key == "speak_voice":
+            self.speech.set_preferred(str(value or ""))
+            self.log("朗读语音 = %s" % (value or "自动"))
+            return
         if key == "drag_threshold":
             self.watcher.drag_threshold = value
         elif key == "hide_after":
@@ -269,6 +275,7 @@ class App:
         self.notebook.set_enabled(note_on)
         self.tray.set_notebook_enabled(note_on)
         self.speech.set_enabled(bool(self.settings.get("speak_enabled")))
+        self.speech.set_preferred(str(self.settings.get("speak_voice") or ""))
         want = bool(self.settings.get("enabled"))
         if want != self.enabled:
             self._toggle()
