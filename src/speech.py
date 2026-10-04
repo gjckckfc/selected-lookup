@@ -144,6 +144,24 @@ def _wav_duration_ms(path):
     return int(data_size * 1000 / byte_rate)
 
 
+def _wav_complete(path):
+    """wav 是不是写完了: RIFF 头里声明的长度必须和文件实际长度对上。
+
+    合成是流式写盘的, 早一步去播会拿到"找不到文件"(MCI 275)或者半截音频。
+    """
+    try:
+        size = path.stat().st_size
+        if size < 44:
+            return False
+        with open(path, "rb") as handle:
+            head = handle.read(64)
+    except OSError:
+        return False
+    if len(head) < 44 or head[:4] != b"RIFF" or head[8:12] != b"WAVE":
+        return False
+    return int.from_bytes(head[4:8], "little") + 8 == size
+
+
 class Speech:
     def __init__(self, cache_dir=None, logger=None, enabled=True):
         self.log = logger or (lambda message: None)
@@ -377,8 +395,24 @@ class Speech:
         if path is None:
             return None
         if path.exists():
-            return path
+            if _wav_complete(path):
+                return path
+            # 上一次被打断留下的半截文件: 删掉重来
+            try:
+                path.unlink()
+            except OSError:
+                pass
         return self._synthesize(text, voice, rate, path)
+
+    def _wait_wav(self, path, timeout=3.0):
+        """等合成把文件写完, 再交给播放器。"""
+        deadline = time.monotonic() + timeout
+        while True:
+            if _wav_complete(path):
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.05)
 
     def _synthesize(self, text, voice, rate, path):
         try:
@@ -402,7 +436,10 @@ class Speech:
         if not answer.startswith("OK"):
             self.log("朗读失败: %s" % (answer or "没有回应")[:140])
             return None
-        return path if path.exists() else None
+        if not self._wait_wav(path):
+            self.log("朗读失败: 音频文件没写完")
+            return None
+        return path
 
     def _cache_path(self, text, voice, rate):
         if self.cache_dir is None:
@@ -436,6 +473,8 @@ class Speech:
 
     def _stop_playback(self):
         with self._play_lock:
+            if self._playing:
+                self.log("朗读打断: 停掉正在播的那句")
             self._stop_locked()
             self._playing = False
 
