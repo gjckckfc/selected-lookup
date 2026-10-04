@@ -303,6 +303,7 @@ class Speech:
         generation = self._generation
         # 用户点了新的: 立刻掐掉上一句, 不等它念完
         self._stop_playback()
+        self.log("朗读请求: %s" % text[:30])
         threading.Thread(target=self._speak, args=(text, voice, notify, generation),
                          daemon=True).start()
         return True
@@ -345,8 +346,10 @@ class Speech:
         if path is None:
             return
         if generation != self._generation:
+            self.log("朗读丢弃(已过期): %s" % text[:30])
             return                      # 用户已经点了别的, 这条就别播了
         duration = _wav_duration_ms(path)
+        self.log("朗读播放: %s" % text[:30])
         self._play(path)
         if notify:
             try:
@@ -395,9 +398,14 @@ class Speech:
 
     @staticmethod
     def _stop_locked():
-        """掐掉正在播的那句。调用方要持有 _play_lock。"""
-        _mci("stop %s" % PLAY_ALIAS)
-        _mci("close %s" % PLAY_ALIAS)
+        """掐掉所有在播的音频。调用方要持有 _play_lock。
+
+        用 `stop all` / `close all` 而不是只点名我们的别名: 万一有哪条流没被
+        正确关掉(别名重名、上一次 close 失败等), 这一下也能兜住, 不会出现
+        "旧的声音又冒出来"。
+        """
+        _mci("stop all")
+        _mci("close all")
 
     def _play(self, path):
         """播放一个 wav。要换句时先显式停掉上一句——两句同时响是没人想要的。"""
@@ -419,6 +427,8 @@ class Speech:
 
     def stop(self):
         self._generation += 1           # 让还没合成完的请求作废
+        if self._playing:
+            self.log("朗读被停止(浮窗收起或换内容)")
         self._stop_playback()
 
     def close(self):
