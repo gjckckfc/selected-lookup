@@ -18,6 +18,7 @@ DEFAULTS = {
     "speak_enabled": True,     # 右键朗读
     "speak_mode": "en",        # en = 只读英文; both = 中英都读
     "speak_voice": "",         # 英语用哪个声音; 空 = 自动挑
+    "speak_prewarm": False,    # 选中就提前合成语音(更快, 但流量更大)
     # --- 整句翻译（走用户自己的 API 密钥）---
     "translate_enabled": False,
     "api_key": "",

@@ -75,6 +75,7 @@ class App:
             on_geometry=self._sync_popup_rect,
             on_speak=self._on_speak_request,
             on_stop_speak=self._on_speak_stop,
+            on_prewarm=self._on_prewarm,
         )
         self.results = queue.Queue()
         self.commands = queue.Queue()
@@ -121,9 +122,7 @@ class App:
 
     def _on_speak_request(self, token, text, lang):
         """浮窗右键 → 朗读。返回是否真的开始了(浮窗据此决定要不要高亮)。"""
-        if not self.settings.get("speak_enabled") or not self.speech.available:
-            return False
-        if lang == "zh" and self.settings.get("speak_mode") != "both":
+        if not self._speak_allowed(lang):
             return False
         text = " ".join((text or "").split())
         if not text:
@@ -136,6 +135,33 @@ class App:
 
     def _on_speak_stop(self):
         self.speech.stop()
+
+    def _speak_allowed(self, lang):
+        if not self.settings.get("speak_enabled") or not self.speech.available:
+            return False
+        if lang == "zh" and self.settings.get("speak_mode") != "both":
+            return False
+        return True
+
+    def _on_prewarm(self, text, lang):
+        """鼠标停在某一块上 → 提前把音频合成好, 右键时就不用等。"""
+        if not self._speak_allowed(lang):
+            return
+        self.speech.prewarm(text, lang)
+
+    def _prewarm_main(self, result, text):
+        """设置了"选中就预热"时, 浮窗一出来就把主体英文合成好。"""
+        if not self._speak_allowed("en"):
+            return
+        target = text
+        if result.entry is not None and result.kind in ("word", "phrase"):
+            target = result.entry.word
+        target = " ".join((target or "").split())
+        if not target:
+            return
+        if len(target) > SPEAK_MAX_CHARS:
+            target = target[:SPEAK_MAX_CHARS]
+        self.speech.prewarm(target, "en")
 
     def _speech_info(self):
         """设置面板里显示一句: 现在用的是哪个声音。"""
@@ -358,6 +384,8 @@ class App:
                 else:
                     self.popup.show(result, x, y)
                     self.notebook.record(result)
+                if self.settings.get("speak_prewarm"):
+                    self._prewarm_main(result, text)
         except queue.Empty:
             pass
         self.root.after(25, self._pump)

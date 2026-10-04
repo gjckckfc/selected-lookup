@@ -106,6 +106,7 @@ class SettingsWindow:
         self._radio_row(sp, "speak_mode",
                         (("只读英文", "en"), ("中英都读", "both")))
         self._voice_row(sp)
+        self._check(sp, "选中就提前生成语音（右键更快，但流量更大）", "speak_prewarm")
         self._speak_hint = ttk.Label(sp, text="", style="Hint.TLabel",
                                      wraplength=300, justify="left")
         self._speak_hint.pack(anchor="w", pady=(6, 0))

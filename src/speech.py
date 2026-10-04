@@ -24,7 +24,8 @@ from pathlib import Path
 CREATE_NO_WINDOW = 0x08000000
 
 # 合成进程是按需拉起的: 闲置这么久就关掉, 把内存还回去
-IDLE_SECONDS = 150
+# (进程约 75 MB; 用户明确说可以接受, 所以留足 5 分钟, 避免频繁重启的等待)
+IDLE_SECONDS = 300
 REAP_INTERVAL = 15
 
 LIST_VOICES = (
@@ -139,6 +140,8 @@ class Speech:
         self.preferred = ""              # 用户指定的英语语音, 空 = 自动挑
         self._proc = None
         self._lock = threading.Lock()
+        self._inflight_lock = threading.Lock()
+        self._inflight = set()           # 正在预热的文本, 避免重复合成
         self._started = False
         self._closed = False
         self._last_used = 0.0
@@ -178,8 +181,10 @@ class Speech:
             self.log("朗读不可用: 系统里没有英语语音 (可用语音 %d 个)" % len(voices))
             return
         self.available = True
-        self.log("朗读就绪: 英语[%s] 中文[%s] (合成进程按需启动, 闲 %d 秒自动关)" % (
-            self.voice_en, self.voice_zh or "无", IDLE_SECONDS))
+        idle = ("%d 分钟" % (IDLE_SECONDS // 60)) if IDLE_SECONDS >= 60 \
+            else ("%d 秒" % IDLE_SECONDS)
+        self.log("朗读就绪: 英语[%s] 中文[%s] (合成进程按需启动, 闲 %s后自动关)" % (
+            self.voice_en, self.voice_zh or "无", idle))
         threading.Thread(target=self._reap_loop, name="speech-reap",
                          daemon=True).start()
 
@@ -281,6 +286,32 @@ class Speech:
         threading.Thread(target=self._speak, args=(text, voice, notify, generation),
                          daemon=True).start()
         return True
+
+    def prewarm(self, text, lang="en"):
+        """后台先把音频合成好(不播放), 等用户真去右键时就能立刻出声。"""
+        if not self.available or not text:
+            return False
+        text = " ".join(text.split())
+        voice = self.voice_zh if lang == "zh" else self.voice_en
+        if not voice:
+            return False
+        path = self._cache_path(text, voice)
+        if path is None or path.exists():
+            return False
+        with self._inflight_lock:
+            if text in self._inflight:
+                return False
+            self._inflight.add(text)
+        threading.Thread(target=self._prewarm_worker, args=(text, voice, path),
+                         daemon=True).start()
+        return True
+
+    def _prewarm_worker(self, text, voice, path):
+        try:
+            self._synthesize(text, voice, path)
+        finally:
+            with self._inflight_lock:
+                self._inflight.discard(text)
 
     def _speak(self, text, voice, notify, generation):
         path = self._speak_path(text, voice)

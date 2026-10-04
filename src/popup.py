@@ -63,6 +63,7 @@ DRAG_SLOP = 4            # 松开时位移小于这个值算"点击", 否则算"
 MAX_DEF_LINES = 3        # 每个单词块最多显示几行释义
 MAX_ORIGIN_LINES = 2     # 原文最多显示几行, 超出收起
 SCROLL_STEP = 26         # 滚轮一格滚多少像素
+PREWARM_DELAY = 250      # 鼠标在块上停多久就在后台预生成语音(毫秒)
 
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
@@ -88,7 +89,7 @@ class Popup:
                  opacity=DEFAULT_OPACITY,
                  hover_opaque=DEFAULT_HOVER_OPAQUE, width=DEFAULT_WIDTH,
                  max_height=DEFAULT_MAX_HEIGHT, on_geometry=None,
-                 on_speak=None, on_stop_speak=None):
+                 on_speak=None, on_stop_speak=None, on_prewarm=None):
         self.master = master
         self.hide_after = hide_after
         self.radius = radius
@@ -99,6 +100,7 @@ class Popup:
         self.on_geometry = on_geometry
         self.on_speak = on_speak
         self.on_stop_speak = on_stop_speak
+        self.on_prewarm = on_prewarm
         self._last_result = None
 
         self._timer = None
@@ -120,6 +122,8 @@ class Popup:
         self._speak_widget = None
         self._speak_token = 0
         self._speak_timer = None
+        self._prewarm_timer = None
+        self._prewarmed = set()
 
         self._small_font = tkfont.Font(family=FONT_FAMILY, size=9)
 
@@ -381,12 +385,45 @@ class Popup:
                 self._set_bg(self._hover_block, CARD_BG)
             self._hover_block = block
             self._set_bg(block, BLOCK_HOVER)
+        self._schedule_prewarm(block)
 
     def _block_leave(self, block):
+        if self._prewarm_timer:
+            self.master.after_cancel(self._prewarm_timer)
+            self._prewarm_timer = None
         if self._leave_timer:
             self.master.after_cancel(self._leave_timer)
         # 延迟一点点: 鼠标从块挪到块内子控件时也会触发 Leave, 别闪
         self._leave_timer = self.master.after(70, lambda: self._do_leave(block))
+
+    def _schedule_prewarm(self, block):
+        """鼠标在块上停一下就在后台把音频合成好, 右键时就不用等了。"""
+        if self.on_prewarm is None:
+            return
+        text = getattr(block, "_speak_text", "")
+        if not text:
+            return
+        if self._prewarm_timer:
+            self.master.after_cancel(self._prewarm_timer)
+        self._prewarm_timer = self.master.after(
+            PREWARM_DELAY, lambda b=block: self._do_prewarm(b))
+
+    def _do_prewarm(self, block):
+        self._prewarm_timer = None
+        if not self._alive(block) or self._hover_block is not block:
+            return
+        text = getattr(block, "_speak_text", "")
+        if not text:
+            return
+        lang = self._lang_of(text)
+        key = (text, lang)
+        if key in self._prewarmed:
+            return
+        self._prewarmed.add(key)
+        try:
+            self.on_prewarm(text, lang)
+        except Exception:
+            pass
 
     def _do_leave(self, block):
         self._leave_timer = None
@@ -423,6 +460,13 @@ class Popup:
 
     def _clear(self):
         self._end_speaking()
+        if self._prewarm_timer:
+            try:
+                self.master.after_cancel(self._prewarm_timer)
+            except Exception:
+                pass
+            self._prewarm_timer = None
+        self._prewarmed.clear()
         self._copy_btn = None
         self._subtitle_label = None
         self._hover_block = None
@@ -804,6 +848,12 @@ class Popup:
 
     def hide(self):
         self._end_speaking()
+        if self._prewarm_timer:
+            try:
+                self.master.after_cancel(self._prewarm_timer)
+            except Exception:
+                pass
+            self._prewarm_timer = None
         if self.on_stop_speak:
             try:
                 self.on_stop_speak()
