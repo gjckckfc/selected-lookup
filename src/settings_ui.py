@@ -42,6 +42,7 @@ class SettingsWindow:
         self.win = None
         self._loading = False
         self._scales = {}
+        self._spins = {}
         self._value_labels = {}
         self._checks = {}
         self._radios = {}
@@ -98,10 +99,11 @@ class SettingsWindow:
         group = ttk.LabelFrame(self.win, text="取词", padding=10, style="Group.TLabelframe")
         group.pack(fill="x")
         self._check(group, "启用取词（关闭后拖选什么都不弹）", "enabled")
-        self._scale(group, "拖动判定", "drag_threshold", 2, 40, 1, "px",
-                    "拖动超过这个距离才算选中，误弹就调大")
-        self._scale(group, "自动收起", "hide_after", 2, 30, 1, "秒",
-                    "取消选中会立刻收起；一直选着不动，超过这个时间也会收起")
+        self._spin(group, "拖动判定", "drag_threshold", 2, 40, "px",
+                   "按下后移动超过这个距离才算拖选，否则算单击；"
+                   "6px 约半个汉字宽，只用来过滤手抖")
+        self._spin(group, "自动收起", "hide_after", 2, 30, "秒",
+                   "取消选中会立刻收起；一直选着不动，超过这个时间也会收起")
 
         # ---- 翻译 ----
         tr = ttk.LabelFrame(self.win, text="AI 翻译（DeepSeek）", padding=10,
@@ -205,7 +207,41 @@ class SettingsWindow:
         self._value_labels[key] = (value_label, step, unit, fmt)
 
         if hint:
-            ttk.Label(parent, text=hint, style="Hint.TLabel").pack(anchor="w", pady=(1, 0))
+            ttk.Label(parent, text=hint, style="Hint.TLabel", wraplength=380,
+                      justify="left").pack(anchor="w", pady=(1, 0))
+
+    def _spin(self, parent, text, key, low, high, unit, hint=None):
+        """能直接打字的数值输入框(带上下箭头), 回车或失焦时夹到范围里。"""
+        row = ttk.Frame(parent)
+        row.pack(fill="x", pady=(6, 0))
+        ttk.Label(row, text=text, width=self._field, anchor="w").pack(side="left")
+        var = tk.StringVar(value=self._spin_text(key))
+        spin = ttk.Spinbox(row, from_=low, to=high, width=5,
+                           textvariable=var, justify="right")
+        spin.pack(side="left")
+        ttk.Label(row, text=unit).pack(side="left", padx=(4, 0))
+        spin.configure(command=lambda k=key: self._commit_spin(k))
+        spin.bind("<Return>", lambda event, k=key: self._commit_spin(k))
+        spin.bind("<FocusOut>", lambda event, k=key: self._commit_spin(k))
+        self._spins[key] = var
+        if hint:
+            ttk.Label(parent, text=hint, style="Hint.TLabel", wraplength=380,
+                      justify="left").pack(anchor="w", pady=(1, 0))
+
+    def _spin_text(self, key):
+        return "%d" % round(self.settings.get(key))
+
+    def _commit_spin(self, key):
+        if self._loading or key not in self._spins:
+            return
+        var = self._spins[key]
+        try:
+            raw = float(var.get())
+        except (TypeError, ValueError):
+            raw = self.settings.get(key)
+        value = self.settings.set(key, raw)     # set() 会按范围夹取
+        var.set(self._spin_text(key))
+        self.on_change(key, value)
 
     def _entry(self, parent, text, key, hint=None, secret=False):
         row = ttk.Frame(parent)
@@ -376,6 +412,8 @@ class SettingsWindow:
             for key, scale in self._scales.items():
                 scale.set(self.settings.get(key))
                 self._show_value(key)
+            for key, var in self._spins.items():
+                var.set(self._spin_text(key))
             for key, var in self._radios.items():
                 var.set(str(self.settings.get(key)))
             self._fill_voices()
