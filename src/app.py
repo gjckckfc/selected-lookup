@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import queue
 import sys
+import threading
 import time
 import tkinter as tk
 from pathlib import Path
@@ -25,6 +26,7 @@ from dictionary import Dictionary  # noqa: E402
 from popup import Popup  # noqa: E402
 from settings_ui import SettingsWindow  # noqa: E402
 from tray import TrayIcon  # noqa: E402
+from translate import Translator  # noqa: E402
 
 HOTKEYS = [
     (MOD_CONTROL | MOD_ALT, ord("Q"), "quit"),
@@ -44,6 +46,11 @@ class App:
             self.settings = Settings(Path(__file__).resolve().parent.parent / "settings.json")
 
         self.dictionary = Dictionary(db_path, index_path)
+        self.translator = Translator(
+            Path(db_path).resolve().parent / "translate_cache.sqlite", logger=self.log)
+        self._reload_translator()
+        self.translate_results = queue.Queue()
+        self._translate_seq = 0
         self.root = tk.Tk()
         self.root.withdraw()
 
@@ -78,6 +85,40 @@ class App:
             on_change=self._on_setting_changed,
             on_reset=self._apply_all_settings,
         )
+        self.settings_window.on_test_translate = self._test_translate
+
+    # ------------------------------------------------------------------
+    # 翻译
+    # ------------------------------------------------------------------
+
+    def _reload_translator(self):
+        self.translator.configure(
+            base_url=self.settings.get("api_base"),
+            api_key=self.settings.get("api_key"),
+            model=self.settings.get("model"),
+        )
+
+    def _test_translate(self):
+        self._reload_translator()
+        return self.translator.test()
+
+    def _translate_ready(self):
+        return bool(self.settings.get("translate_enabled")) and self.translator.available
+
+    @staticmethod
+    def _looks_like_sentence(text):
+        """单词和词组交给词典, 只有句子才值得花 token 去翻译。"""
+        stripped = text.strip()
+        if len(stripped) < 12:
+            return False
+        words = stripped.split()
+        if len(words) >= 3:
+            return True
+        return len(words) >= 2 and stripped.endswith((".", "!", "?"))
+
+    def _do_translate(self, seq, text, result):
+        translation = self.translator.translate(text)
+        self.translate_results.put((seq, result, translation))
 
     def _sync_popup_rect(self):
         """把浮窗当前占的矩形告诉钩子, 让按在浮窗上的手势不被当成选词。"""
@@ -133,6 +174,8 @@ class App:
             self.watcher.drag_threshold = value
         elif key == "hide_after":
             self.popup.apply_settings(hide_after=value)
+        elif key in ("translate_enabled", "api_base", "api_key", "model"):
+            self._reload_translator()
         self.log("设置 %s = %s" % (key, value))
 
     def _apply_all_settings(self):
@@ -141,6 +184,7 @@ class App:
         want = bool(self.settings.get("enabled"))
         if want != self.enabled:
             self._toggle()
+        self._reload_translator()
         self.log("已恢复默认设置")
 
     def _open_settings(self):
@@ -169,6 +213,19 @@ class App:
             self.root.after(25, self._pump)
             return
 
+        # 译文先到先处理, 免得被后到的选词顶掉
+        try:
+            while True:
+                seq, result, translation = self.translate_results.get_nowait()
+                if seq != self._translate_seq:
+                    continue
+                if translation:
+                    self.popup.update_translation(result, translation=translation)
+                else:
+                    self.popup.update_translation(result, failed=True)
+        except queue.Empty:
+            pass
+
         try:
             while True:
                 text, x, y = self.results.get_nowait()
@@ -178,7 +235,19 @@ class App:
                 result = self.dictionary.lookup(text)
                 cost = (time.perf_counter() - started) * 1000
                 self.log("查词 %.1fms  kind=%s  %r" % (cost, result.kind, text[:60]))
-                self.popup.show(result, x, y)
+
+                self._translate_seq += 1
+                seq = self._translate_seq
+                cached = self.translator.cache_get(text) if self._translate_ready() else None
+                if cached:
+                    self.log("译文命中缓存")
+                    self.popup.show(result, x, y, translation=cached)
+                elif self._translate_ready() and self._looks_like_sentence(text):
+                    self.popup.show(result, x, y, pending=True)
+                    threading.Thread(target=self._do_translate,
+                                     args=(seq, text, result), daemon=True).start()
+                else:
+                    self.popup.show(result, x, y)
         except queue.Empty:
             pass
         self.root.after(25, self._pump)
@@ -188,6 +257,7 @@ class App:
             self.watcher.stop()
         finally:
             self.tray.stop()
+            self.translator.close()
             self.root.quit()
 
     def run(self):
@@ -195,6 +265,12 @@ class App:
         self.log("启动, 词条 %s, 词形 %s, 设置 %s" % (
             format(stats["entries"], ","), format(stats["forms"], ","),
             self.settings_path or "(默认)"))
+        if self._translate_ready():
+            self.log("整句翻译已启用: %s / %s, 缓存 %d 条" % (
+                self.translator.base_url, self.translator.model,
+                self.translator.cache_count()))
+        else:
+            self.log("整句翻译未启用（未开启或密钥未填）")
         self.watcher.start()
         self.tray.start()
         self.root.after(25, self._pump)

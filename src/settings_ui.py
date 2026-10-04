@@ -6,6 +6,8 @@
 """
 from __future__ import annotations
 
+import queue
+import threading
 import tkinter as tk
 from tkinter import ttk
 
@@ -19,11 +21,15 @@ class SettingsWindow:
         self.settings = settings
         self.on_change = on_change
         self.on_reset = on_reset
+        self.on_test_translate = None
         self.win = None
         self._loading = False
         self._scales = {}
         self._value_labels = {}
         self._checks = {}
+        self._entries = {}
+        self._test_queue = queue.Queue()
+        self._testing = False
 
     # ------------------------------------------------------------------
 
@@ -66,6 +72,25 @@ class SettingsWindow:
         self._scale(group, "最长停留时间", "hide_after", 2, 30, 1, "秒",
                     "取消选中会立刻收起；一直选着不动则超过这个时间收起")
 
+        # ---- 翻译 ----
+        tr = ttk.LabelFrame(self.win, text="整句翻译（用你自己的 API）", padding=12,
+                            style="Group.TLabelframe")
+        tr.pack(fill="x", pady=(14, 0))
+        self._check(tr, "启用整句翻译（选中句子时自动翻译）", "translate_enabled")
+        self._entry(tr, "接口地址", "api_base",
+                    "OpenAI 兼容地址，例如 https://api.deepseek.com/v1")
+        self._entry(tr, "API 密钥", "api_key", "明文存在 settings.json 里", secret=True)
+        self._entry(tr, "模型名", "model",
+                    "建议用非推理模型（如 deepseek-chat），推理模型会多花思考 token")
+        test_row = ttk.Frame(tr)
+        test_row.pack(fill="x", pady=(10, 0))
+        ttk.Button(test_row, text="测试连接", command=self._test).pack(side="left")
+        self._test_label = ttk.Label(test_row, text="", style="Hint.TLabel",
+                                     wraplength=250, justify="left")
+        self._test_label.pack(side="left", padx=(10, 0))
+        ttk.Label(tr, text="选中文字会发送给你填写的服务商；不上传其他任何内容。",
+                  style="Hint.TLabel").pack(anchor="w", pady=(6, 0))
+
         # ---- 底部按钮 ----
         footer = ttk.Frame(self.win)
         footer.pack(fill="x", pady=(16, 0))
@@ -77,6 +102,7 @@ class SettingsWindow:
         self._center()
         self.win.lift()
         self.win.focus_force()
+        self._poll_queue()
 
     def _center(self):
         width = self.win.winfo_reqwidth()
@@ -112,6 +138,60 @@ class SettingsWindow:
         if hint:
             ttk.Label(parent, text=hint, style="Hint.TLabel").pack(anchor="w", pady=(2, 0))
 
+    def _entry(self, parent, text, key, hint=None, secret=False):
+        row = ttk.Frame(parent)
+        row.pack(fill="x", pady=(10, 0))
+        ttk.Label(row, text=text, width=8).pack(side="left")
+        var = tk.StringVar(value=str(self.settings.get(key) or ""))
+        entry = ttk.Entry(row, textvariable=var, show="*" if secret else "")
+        entry.pack(side="left", fill="x", expand=True)
+        # 边打边存会把磁盘写爆, 所以失焦或回车时才落盘
+        entry.bind("<FocusOut>", lambda event, k=key, v=var: self._on_entry(k, v))
+        entry.bind("<Return>", lambda event, k=key, v=var: self._on_entry(k, v))
+        self._entries[key] = var
+        if hint:
+            ttk.Label(parent, text=hint, style="Hint.TLabel").pack(anchor="w", pady=(2, 0))
+        return entry
+
+    def _on_entry(self, key, var):
+        if self._loading:
+            return
+        value = var.get().strip()
+        if value == (self.settings.get(key) or ""):
+            return
+        self.settings.set(key, value)
+        self.on_change(key, value)
+
+    def _test(self):
+        if self._testing or self.on_test_translate is None:
+            return
+        self._testing = True
+        self._test_label.configure(text="测试中…")
+
+        def work():
+            try:
+                ok, message = self.on_test_translate()
+            except Exception as exc:
+                ok, message = False, str(exc)
+            self._test_queue.put((ok, message))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _poll_queue(self):
+        try:
+            while True:
+                ok, message = self._test_queue.get_nowait()
+                self._testing = False
+                self._test_label.configure(text=("成功 " if ok else "失败 ") + message)
+        except queue.Empty:
+            pass
+        if self.win is not None:
+            try:
+                if self.win.winfo_exists():
+                    self.win.after(150, self._poll_queue)
+            except tk.TclError:
+                pass
+
     # ------------------------------------------------------------------
 
     def _on_check(self, key, var):
@@ -145,6 +225,8 @@ class SettingsWindow:
             for key, scale in self._scales.items():
                 scale.set(self.settings.get(key))
                 self._show_value(key)
+            for key, var in self._entries.items():
+                var.set(str(self.settings.get(key) or ""))
         finally:
             self._loading = False
 

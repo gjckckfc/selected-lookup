@@ -537,9 +537,23 @@ class Popup:
                 bits.append("%s %s" % (names[code], value))
         return "  ".join(bits[:4])
 
-    def _render(self, result):
+    def _leading(self, translation, pending, failed):
+        """翻译区放在内容最上面: 翻译中 -> 占位; 译文到了 -> 一个可点块。"""
+        if pending:
+            self._label(self.inner, "翻译中…", NOTE_FG, size=9, pady=(0, 4))
+            return ["（翻译中…）"]
+        if translation:
+            self._block(self.inner, "译文", [translation], translation)
+            return [translation, ""]
+        if failed:
+            self._label(self.inner, "翻译失败，详见 logs/app.log", NOTE_FG,
+                        size=9, pady=(0, 4))
+        return []
+
+    def _render(self, result, translation=None, pending=False, failed=False):
         self._clear()
         self._clipboard_text = ""
+        lead = self._leading(translation, pending, failed)
 
         if result.kind == "miss":
             self._header(result.query)
@@ -557,6 +571,7 @@ class Popup:
 
             all_lines = ["%s  /%s/" % (entry.word, entry.phonetic.strip("/"))
                          if entry.phonetic else entry.word]
+            all_lines = lead + all_lines
             marks = []
             if entry.tags:
                 marks.append("、".join(entry.tags))
@@ -587,7 +602,7 @@ class Popup:
         # breakdown: 整串没查到, 退回逐词
         self._header("逐词释义", "整串没有词条，下面按词拆开")
         self._origin_area(result.query)
-        all_lines = ["【原文】%s" % result.query, ""]
+        all_lines = lead + ["【原文】%s" % result.query, ""]
         for entry, matched, token in result.parts:
             head = "%s -> %s" % (token, entry.word) if matched else token
             body = (entry.translation or entry.definition)[:MAX_DEF_LINES]
@@ -624,9 +639,9 @@ class Popup:
         self.canvas.configure(height=max(visible, 1))
         self.win.update_idletasks()
 
-    def show(self, result, x, y):
+    def show(self, result, x, y, translation=None, pending=False, failed=False):
         self._last_result = result
-        self._render(result)
+        self._render(result, translation=translation, pending=pending, failed=failed)
         self._layout()
         self.canvas.yview_moveto(0)
 
@@ -661,6 +676,11 @@ class Popup:
         self._schedule_hover_check()
         if self.on_geometry:
             self.on_geometry()
+
+    def update_translation(self, result, translation=None, failed=False):
+        """译文到了以后就地更新内容, 窗口位置不动。"""
+        self._render(result, translation=translation, failed=failed)
+        self._resize_in_place()
 
     def _restart_timer(self):
         if self._timer:

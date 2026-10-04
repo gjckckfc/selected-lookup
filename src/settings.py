@@ -12,7 +12,15 @@ DEFAULTS = {
     "enabled": True,          # 启动时是否开启取词
     "drag_threshold": 6,      # 判定为拖选的像素阈值
     "hide_after": 5.0,        # 浮窗最长停留秒数, 取消选中会立刻收起
+    # --- 整句翻译（走用户自己的 API 密钥）---
+    "translate_enabled": False,
+    "api_base": "https://api.deepseek.com/v1",
+    "api_key": "",
+    "model": "deepseek-chat",
 }
+
+# 字符串型设置, 不做数值夹取
+STR_KEYS = {"api_base", "api_key", "model"}
 
 # 每项的合法范围, 越界会被夹回来
 RANGES = {
@@ -51,6 +59,8 @@ class Settings:
             if key in raw:
                 if isinstance(DEFAULTS[key], bool):
                     self.values[key] = bool(raw[key])
+                elif key in STR_KEYS:
+                    self.values[key] = str(raw[key])
                 else:
                     self.values[key] = clamp(key, raw[key])
 
@@ -68,6 +78,8 @@ class Settings:
     def set(self, key, value):
         if key in DEFAULTS and isinstance(DEFAULTS[key], bool):
             self.values[key] = bool(value)
+        elif key in STR_KEYS:
+            self.values[key] = str(value)
         else:
             self.values[key] = clamp(key, value)
         self.save()
