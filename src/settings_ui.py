@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import os
 import queue
 import threading
 import tkinter as tk
@@ -22,11 +23,13 @@ class SettingsWindow:
         self.on_change = on_change
         self.on_reset = on_reset
         self.on_test_translate = None
+        self.on_speech_info = None
         self.win = None
         self._loading = False
         self._scales = {}
         self._value_labels = {}
         self._checks = {}
+        self._radios = {}
         self._entries = {}
         self._test_queue = queue.Queue()
         self._testing = False
@@ -91,6 +94,19 @@ class SettingsWindow:
         ttk.Label(tr, text="选中文字会发送给你填写的服务商；不上传其他任何内容。",
                   style="Hint.TLabel").pack(anchor="w", pady=(6, 0))
 
+        # ---- 朗读 ----
+        sp = ttk.LabelFrame(self.win, text="朗读（用系统自带语音，不联网）", padding=12,
+                            style="Group.TLabelframe")
+        sp.pack(fill="x", pady=(14, 0))
+        self._check(sp, "启用右键朗读（右键浮窗里的词或句子就念出来）", "speak_enabled")
+        self._radio_row(sp, "speak_mode",
+                        (("只读英文", "en"), ("中英都读", "both")))
+        self._speak_hint = ttk.Label(sp, text="", style="Hint.TLabel",
+                                     wraplength=300, justify="left")
+        self._speak_hint.pack(anchor="w", pady=(6, 0))
+        ttk.Button(sp, text="打开 Windows 语音设置",
+                   command=self._open_speech_settings).pack(anchor="w", pady=(6, 0))
+
         # ---- 底部按钮 ----
         footer = ttk.Frame(self.win)
         footer.pack(fill="x", pady=(16, 0))
@@ -152,6 +168,30 @@ class SettingsWindow:
         if hint:
             ttk.Label(parent, text=hint, style="Hint.TLabel").pack(anchor="w", pady=(2, 0))
         return entry
+
+    def _radio_row(self, parent, key, options):
+        row = ttk.Frame(parent)
+        row.pack(fill="x", pady=(8, 0))
+        var = tk.StringVar(value=str(self.settings.get(key)))
+        for text, value in options:
+            ttk.Radiobutton(row, text=text, value=value, variable=var,
+                            command=lambda v=var, k=key: self._on_radio(k, v)
+                            ).pack(side="left", padx=(0, 14))
+        self._radios[key] = var
+        return var
+
+    def _on_radio(self, key, var):
+        if self._loading:
+            return
+        self.settings.set(key, var.get())
+        self.on_change(key, self.settings.get(key))
+
+    def _open_speech_settings(self):
+        """跳到 Windows 的语音设置页, 让用户自己装英语语音。"""
+        try:
+            os.startfile("ms-settings:speech")
+        except OSError:
+            pass
 
     def _on_entry(self, key, var):
         if self._loading:
@@ -242,8 +282,12 @@ class SettingsWindow:
             for key, scale in self._scales.items():
                 scale.set(self.settings.get(key))
                 self._show_value(key)
+            for key, var in self._radios.items():
+                var.set(str(self.settings.get(key)))
             for key, var in self._entries.items():
                 var.set(str(self.settings.get(key) or ""))
+            if self._speak_hint is not None and self.on_speech_info:
+                self._speak_hint.configure(text=self.on_speech_info())
         finally:
             self._loading = False
 

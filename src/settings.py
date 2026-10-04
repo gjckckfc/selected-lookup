@@ -14,6 +14,9 @@ DEFAULTS = {
     "hide_after": 5.0,        # 浮窗最长停留秒数, 取消选中会立刻收起
     # --- 生词本（本地 Markdown 沉淀，不联网）---
     "notebook_enabled": True,  # 选中即自动收录进 vocabulary/raw/
+    # --- 朗读（用系统自带语音，不联网）---
+    "speak_enabled": True,     # 右键朗读
+    "speak_mode": "en",        # en = 只读英文; both = 中英都读
     # --- 整句翻译（走用户自己的 API 密钥）---
     "translate_enabled": False,
     "api_key": "",
@@ -21,7 +24,12 @@ DEFAULTS = {
 }
 
 # 字符串型设置, 不做数值夹取
-STR_KEYS = {"api_key", "model"}
+STR_KEYS = {"api_key", "model", "speak_mode"}
+
+# 只能取固定几个值的字符串设置
+CHOICES = {
+    "speak_mode": ("en", "both"),
+}
 
 # 每项的合法范围, 越界会被夹回来
 RANGES = {
@@ -61,7 +69,7 @@ class Settings:
                 if isinstance(DEFAULTS[key], bool):
                     self.values[key] = bool(raw[key])
                 elif key in STR_KEYS:
-                    self.values[key] = str(raw[key])
+                    self.values[key] = self._str_value(key, raw[key])
                 else:
                     self.values[key] = clamp(key, raw[key])
 
@@ -80,11 +88,19 @@ class Settings:
         if key in DEFAULTS and isinstance(DEFAULTS[key], bool):
             self.values[key] = bool(value)
         elif key in STR_KEYS:
-            self.values[key] = str(value)
+            self.values[key] = self._str_value(key, value)
         else:
             self.values[key] = clamp(key, value)
         self.save()
         return self.values[key]
+
+    @staticmethod
+    def _str_value(key, value):
+        text = str(value)
+        allowed = CHOICES.get(key)
+        if allowed and text not in allowed:
+            return DEFAULTS[key]
+        return text
 
     def reset(self):
         self.values = dict(DEFAULTS)

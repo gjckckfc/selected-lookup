@@ -27,6 +27,7 @@ from dictionary import Dictionary  # noqa: E402
 from notebook import Notebook  # noqa: E402
 from popup import Popup  # noqa: E402
 from settings_ui import SettingsWindow  # noqa: E402
+from speech import Speech  # noqa: E402
 from tray import TrayIcon  # noqa: E402
 from translate import Translator  # noqa: E402
 
@@ -34,6 +35,9 @@ HOTKEYS = [
     (MOD_CONTROL | MOD_ALT, ord("Q"), "quit"),
     (MOD_CONTROL | MOD_ALT, ord("P"), "pause"),
 ]
+
+# 右键朗读时, 原文最多读这么多字(太长会念个没完)
+SPEAK_MAX_CHARS = 200
 
 
 class App:
@@ -57,10 +61,19 @@ class App:
         self.root = tk.Tk()
         self.root.withdraw()
 
+        self.speech_events = queue.Queue()
+        self._speak_seq = 0
+        self.speech = Speech(
+            cache_dir=Path(db_path).resolve().parent / "voice_cache",
+            logger=self.log,
+            enabled=bool(self.settings.get("speak_enabled")),
+        )
         self.popup = Popup(
             self.root,
             hide_after=self.settings.get("hide_after"),
             on_geometry=self._sync_popup_rect,
+            on_speak=self._on_speak_request,
+            on_stop_speak=self._on_speak_stop,
         )
         self.results = queue.Queue()
         self.commands = queue.Queue()
@@ -98,6 +111,43 @@ class App:
             on_reset=self._apply_all_settings,
         )
         self.settings_window.on_test_translate = self._test_translate
+        self.settings_window.on_speech_info = self._speech_info
+
+    # ------------------------------------------------------------------
+    # 朗读
+    # ------------------------------------------------------------------
+
+    def _on_speak_request(self, token, text, lang):
+        """浮窗右键 → 朗读。返回是否真的开始了(浮窗据此决定要不要高亮)。"""
+        if not self.settings.get("speak_enabled") or not self.speech.available:
+            return False
+        if lang == "zh" and self.settings.get("speak_mode") != "both":
+            return False
+        text = " ".join((text or "").split())
+        if not text:
+            return False
+        if len(text) > SPEAK_MAX_CHARS:
+            text = text[:SPEAK_MAX_CHARS]
+        return self.speech.speak(
+            text, lang,
+            notify=lambda ms, t=token: self.speech_events.put((t, ms)))
+
+    def _on_speak_stop(self):
+        self.speech.stop()
+
+    def _speech_info(self):
+        """设置面板里显示一句: 现在用的是哪个声音。"""
+        if not self.settings.get("speak_enabled"):
+            return "右键朗读已关闭。"
+        if self.speech.preparing:
+            return "正在检查系统语音…"
+        if not self.speech.available:
+            return ("这台机器上没有找到英语语音，右键朗读暂时用不了。"
+                    "点下面的按钮去 Windows 设置里加一个英语语音就行。")
+        if self.settings.get("speak_mode") == "both" and self.speech.voice_zh:
+            return "当前声音：%s（英语）／ %s（中文）。右键浮窗里的词或句子即可朗读。" % (
+                self.speech.voice_en, self.speech.voice_zh)
+        return "当前声音：%s。右键浮窗里的词或句子即可朗读。" % self.speech.voice_en
 
     # ------------------------------------------------------------------
     # 翻译
@@ -181,6 +231,13 @@ class App:
             if bool(value) != self.enabled:
                 self._toggle()
             return
+        if key == "speak_enabled":
+            self.speech.set_enabled(bool(value))
+            self.log("右键朗读 %s" % ("开启" if value else "关闭"))
+            return
+        if key == "speak_mode":
+            self.log("朗读模式 = %s" % value)
+            return
         if key == "drag_threshold":
             self.watcher.drag_threshold = value
         elif key == "hide_after":
@@ -211,6 +268,7 @@ class App:
         note_on = bool(self.settings.get("notebook_enabled"))
         self.notebook.set_enabled(note_on)
         self.tray.set_notebook_enabled(note_on)
+        self.speech.set_enabled(bool(self.settings.get("speak_enabled")))
         want = bool(self.settings.get("enabled"))
         if want != self.enabled:
             self._toggle()
@@ -240,6 +298,13 @@ class App:
                     self.popup.hide()
                 elif command == "settings":
                     self._open_settings()
+        except queue.Empty:
+            pass
+
+        try:
+            while True:
+                token, duration = self.speech_events.get_nowait()
+                self.popup.mark_speaking(token, duration)
         except queue.Empty:
             pass
 
@@ -295,6 +360,7 @@ class App:
             self.watcher.stop()
         finally:
             self.tray.stop()
+            self.speech.close()
             self.translator.close()
             self.root.quit()
 
@@ -317,6 +383,9 @@ class App:
             self.log("整句翻译未启用（未开启或密钥未填）")
         self.watcher.start()
         self.tray.start()
+        if self.speech.enabled:
+            self.log("正在准备本地朗读…")
+            self.speech.start()
         self.root.after(25, self._pump)
         self.root.mainloop()
         self.dictionary.close()

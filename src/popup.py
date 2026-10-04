@@ -42,6 +42,7 @@ LINK_FG = "#7fb2e5"
 
 BLOCK_HOVER = "#2b374b"
 BLOCK_COPIED = "#2c4a3c"
+BLOCK_SPEAK = "#33405f"
 
 BUTTON_BG = "#2c3648"
 BUTTON_FG = "#c9d6ea"
@@ -86,7 +87,8 @@ class Popup:
     def __init__(self, master, hide_after=5.0, radius=DEFAULT_RADIUS,
                  opacity=DEFAULT_OPACITY,
                  hover_opaque=DEFAULT_HOVER_OPAQUE, width=DEFAULT_WIDTH,
-                 max_height=DEFAULT_MAX_HEIGHT, on_geometry=None):
+                 max_height=DEFAULT_MAX_HEIGHT, on_geometry=None,
+                 on_speak=None, on_stop_speak=None):
         self.master = master
         self.hide_after = hide_after
         self.radius = radius
@@ -95,6 +97,8 @@ class Popup:
         self.width = max(220, width)
         self.max_height = max_height
         self.on_geometry = on_geometry
+        self.on_speak = on_speak
+        self.on_stop_speak = on_stop_speak
         self._last_result = None
 
         self._timer = None
@@ -113,6 +117,9 @@ class Popup:
         self._scrollable = False
         self._origin_full = ""
         self._origin_expanded = False
+        self._speak_widget = None
+        self._speak_token = 0
+        self._speak_timer = None
 
         self._small_font = tkfont.Font(family=FONT_FAMILY, size=9)
 
@@ -254,6 +261,7 @@ class Popup:
         widget.bind("<Button-1>", self._on_press)
         widget.bind("<B1-Motion>", self._on_drag_move)
         widget.bind("<ButtonRelease-1>", self._on_release)
+        widget.bind("<Button-3>", self._on_right_click)
         if block is not None:
             # 块里每个子控件都要绑: 鼠标从块挪到块内文字上时块也会发 Leave,
             # 只绑块本身就会"闪一下又灭"。
@@ -263,6 +271,67 @@ class Popup:
             if isinstance(child, tk.Button):
                 continue
             self._bind_interactive(child, block)
+
+    # ---- 右键朗读 ----
+
+    @staticmethod
+    def _speak_target(widget):
+        """往上找第一个带朗读文字的控件, 返回 (控件, 文字)。"""
+        while widget is not None:
+            text = getattr(widget, "_speak_text", "")
+            if text:
+                return widget, text
+            widget = getattr(widget, "master", None)
+        return None, ""
+
+    @staticmethod
+    def _lang_of(text):
+        """按内容猜语种: 中文字占多数就用中文语音。"""
+        cjk = sum(1 for char in text if "\u4e00" <= char <= "\u9fff")
+        letters = sum(1 for char in text if char.isascii() and char.isalpha())
+        return "zh" if cjk > letters else "en"
+
+    def _on_right_click(self, event):
+        widget, text = self._speak_target(event.widget)
+        if not text or self.on_speak is None:
+            return "break"
+        block = self._block_of(widget) or widget
+        self._speak_token += 1
+        token = self._speak_token
+        self._mark_speaking(block)
+        if not self.on_speak(token, text, self._lang_of(text)):
+            self._end_speaking()
+        return "break"
+
+    def _mark_speaking(self, widget):
+        self._end_speaking()
+        self._speak_widget = widget
+        self._set_bg(widget, BLOCK_SPEAK)
+        # 兜底: 万一声音没能开始, 3 秒后自己把高亮收掉
+        self._speak_timer = self.master.after(3000, self._end_speaking)
+
+    def mark_speaking(self, token, duration_ms):
+        """声音真的开始了: 按音频时长决定高亮什么时候收起。"""
+        if token != self._speak_token:
+            return
+        if self._speak_timer:
+            try:
+                self.master.after_cancel(self._speak_timer)
+            except Exception:
+                pass
+        delay = int(duration_ms) + 250 if duration_ms else 3000
+        self._speak_timer = self.master.after(max(delay, 500), self._end_speaking)
+
+    def _end_speaking(self):
+        if self._speak_timer:
+            try:
+                self.master.after_cancel(self._speak_timer)
+            except Exception:
+                pass
+            self._speak_timer = None
+        widget, self._speak_widget = self._speak_widget, None
+        if self._alive(widget):
+            self._set_bg(widget, BLOCK_HOVER if widget is self._hover_block else CARD_BG)
 
     def _on_press(self, event):
         self._press = (event.x_root, event.y_root)
@@ -353,6 +422,7 @@ class Popup:
     # ------------------------------------------------------------------
 
     def _clear(self):
+        self._end_speaking()
         self._copy_btn = None
         self._subtitle_label = None
         self._hover_block = None
@@ -367,7 +437,7 @@ class Popup:
         label.pack(fill="x", pady=pady)
         return label
 
-    def _header(self, title, subtitle=None, small_title=False):
+    def _header(self, title, subtitle=None, small_title=False, speak=None):
         # 标题行单独一个容器, 这样后面加进来的原文区才会落在它下面,
         # 而不是被塞进"标题和按钮之间的空隙"。
         top = tk.Frame(self.header_frame, bg=CARD_BG)
@@ -381,6 +451,7 @@ class Popup:
             wraplength=self.inner_width - 78,
             font=(FONT_FAMILY, 9 if small_title else 12, "normal" if small_title else "bold"))
         self._title_label.pack(anchor="w")
+        self._title_label._speak_text = speak or ""
         self._subtitle_base = subtitle or ""
         self._subtitle_label = tk.Label(box, text=self._subtitle_base, bg=CARD_BG,
                                         fg=NOTE_FG, justify="left", anchor="w",
@@ -432,6 +503,7 @@ class Popup:
         # 原文本身也当做一个可点块: 悬停高亮, 点击复制整段原文
         label._is_block = True
         label._copy_text = text
+        label._speak_text = text
         # 不能用 link.bind("<Button-1>", ...): 之后 _bind_interactive 会把
         # 每个控件的 <Button-1> 重绑成拖动起点, 把那次的处理覆盖掉。
         # 所以改用自定义属性, 由 _on_release 在"没拖动"时调用。
@@ -494,11 +566,12 @@ class Popup:
 
     # ---- 单词块 ----
 
-    def _block(self, parent, title, lines, copy_text):
+    def _block(self, parent, title, lines, copy_text, speak=None):
         block = tk.Frame(parent, bg=CARD_BG, padx=7, pady=5)
         block.pack(fill="x", pady=(6, 0))
         block._is_block = True
         block._copy_text = copy_text
+        block._speak_text = speak or ""
         if title:
             tk.Label(block, text=title, bg=CARD_BG, fg=PHONETIC_FG, justify="left",
                      anchor="w", wraplength=self.inner_width - 14,
@@ -551,7 +624,8 @@ class Popup:
             self._label(self.inner, "翻译中…", NOTE_FG, size=9, pady=(0, 4))
             return ["（翻译中…）"]
         if translation:
-            self._block(self.inner, "译文", [translation], translation)
+            self._block(self.inner, "译文", [translation], translation,
+                        speak=translation)
             return [translation, ""]
         if failed:
             self._label(self.inner, "翻译失败，详见 logs/app.log", NOTE_FG,
@@ -566,7 +640,7 @@ class Popup:
         lead = self._leading(translation, pending, failed)
 
         if result.kind == "miss":
-            self._header(result.query)
+            self._header(result.query, speak=result.query)
             self._label(self.inner, "词典里没有这个词条", NOTE_FG, size=9, pady=(6, 0))
             self._bind_interactive(self.header_frame)
             self._bind_interactive(self.inner)
@@ -577,7 +651,7 @@ class Popup:
             title = entry.word
             if entry.phonetic:
                 title += "   /%s/" % entry.phonetic.strip("/")
-            self._header(title)
+            self._header(title, speak=entry.word)
 
             all_lines = ["%s  /%s/" % (entry.word, entry.phonetic.strip("/"))
                          if entry.phonetic else entry.word]
@@ -596,7 +670,7 @@ class Popup:
 
             body = (entry.translation or entry.definition)[:MAX_DEF_LINES]
             block_text = "\n".join([all_lines[0]] + body)
-            self._block(self.inner, None, body, block_text)
+            self._block(self.inner, None, body, block_text, speak=entry.word)
             all_lines.extend(body)
 
             if entry.exchange:
@@ -616,7 +690,7 @@ class Popup:
             head = "%s -> %s" % (token, entry.word) if matched else token
             body = (entry.translation or entry.definition)[:MAX_DEF_LINES]
             copy_text = "\n".join([head] + body)
-            self._block(self.inner, head, body, copy_text)
+            self._block(self.inner, head, body, copy_text, speak=token)
             all_lines.append(copy_text)
             all_lines.append("")
         self._clipboard_text = "\n".join(all_lines).rstrip()
@@ -729,6 +803,12 @@ class Popup:
         self._schedule_hover_check()
 
     def hide(self):
+        self._end_speaking()
+        if self.on_stop_speak:
+            try:
+                self.on_stop_speak()
+            except Exception:
+                pass
         for attr in ("_timer", "_hover_timer", "_leave_timer", "_copy_timer",
                      "_flash_timer"):
             timer = getattr(self, attr)

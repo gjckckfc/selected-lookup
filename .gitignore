@@ -24,5 +24,8 @@ vocabulary/raw/
 vocabulary/curated/
 vocabulary/*.tmp
 
+# 朗读缓存（用户数据不入库）
+data/voice_cache/
+
 # 个人设置
 settings.json
