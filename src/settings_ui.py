@@ -2,7 +2,10 @@
 """设置窗口。
 
 按"工具类界面"来做: 用系统原生控件, 不做模态弹窗, 改一下就立即生效。
-分三个组——取词触发、浮窗外观、开关, 每组里控件紧凑, 组与组之间留白。
+窗口默认置顶, 方便一边看设置一边调。
+
+只放"经常要调"的东西: AI 翻译、朗读。取词的判定阈值/停留时间不再暴露
+(用系统默认 6px / 5 秒), 需要时直接改 settings.json; 开关取词在托盘右键菜单里。
 """
 from __future__ import annotations
 
@@ -18,7 +21,7 @@ FONT = ("Microsoft YaHei UI", 9)
 TITLE_FONT = ("Microsoft YaHei UI", 11, "bold")
 AUTO_VOICE = "自动（推荐）"
 # 对齐用的字段标签(标签宽度按"中文算两格"折算, 取最长的那个 + 1)
-FIELD_LABELS = ("拖动判定", "自动收起", "朗读内容", "英语声音", "语速")
+FIELD_LABELS = ("朗读内容", "英语声音", "语速")
 
 
 def _field_width():
@@ -42,7 +45,6 @@ class SettingsWindow:
         self.win = None
         self._loading = False
         self._scales = {}
-        self._spins = {}
         self._value_labels = {}
         self._checks = {}
         self._radios = {}
@@ -95,20 +97,10 @@ class SettingsWindow:
                         ).pack(side="right", pady=(4, 0))
         self._top_var = top_var
 
-        # ---- 取词 ----
-        group = ttk.LabelFrame(self.win, text="取词", padding=10, style="Group.TLabelframe")
-        group.pack(fill="x")
-        self._check(group, "启用取词（关闭后拖选什么都不弹）", "enabled")
-        self._spin(group, "拖动判定", "drag_threshold", 2, 40, "px",
-                   "按下后移动超过这个距离才算拖选，否则算单击；"
-                   "6px 约半个汉字宽，只用来过滤手抖")
-        self._spin(group, "自动收起", "hide_after", 2, 30, "秒",
-                   "取消选中会立刻收起；一直选着不动，超过这个时间也会收起")
-
         # ---- 翻译 ----
         tr = ttk.LabelFrame(self.win, text="AI 翻译（DeepSeek）", padding=10,
                             style="Group.TLabelframe")
-        tr.pack(fill="x", pady=(12, 0))
+        tr.pack(fill="x")
         self._check(tr, "启用整句翻译（选中句子时自动翻译）", "translate_enabled")
         self._entry(tr, "API 密钥", "api_key",
                     "在 platform.deepseek.com 申请；明文存在 settings.json 里", secret=True)
@@ -209,39 +201,6 @@ class SettingsWindow:
         if hint:
             ttk.Label(parent, text=hint, style="Hint.TLabel", wraplength=380,
                       justify="left").pack(anchor="w", pady=(1, 0))
-
-    def _spin(self, parent, text, key, low, high, unit, hint=None):
-        """能直接打字的数值输入框(带上下箭头), 回车或失焦时夹到范围里。"""
-        row = ttk.Frame(parent)
-        row.pack(fill="x", pady=(6, 0))
-        ttk.Label(row, text=text, width=self._field, anchor="w").pack(side="left")
-        var = tk.StringVar(value=self._spin_text(key))
-        spin = ttk.Spinbox(row, from_=low, to=high, width=5,
-                           textvariable=var, justify="right")
-        spin.pack(side="left")
-        ttk.Label(row, text=unit).pack(side="left", padx=(4, 0))
-        spin.configure(command=lambda k=key: self._commit_spin(k))
-        spin.bind("<Return>", lambda event, k=key: self._commit_spin(k))
-        spin.bind("<FocusOut>", lambda event, k=key: self._commit_spin(k))
-        self._spins[key] = var
-        if hint:
-            ttk.Label(parent, text=hint, style="Hint.TLabel", wraplength=380,
-                      justify="left").pack(anchor="w", pady=(1, 0))
-
-    def _spin_text(self, key):
-        return "%d" % round(self.settings.get(key))
-
-    def _commit_spin(self, key):
-        if self._loading or key not in self._spins:
-            return
-        var = self._spins[key]
-        try:
-            raw = float(var.get())
-        except (TypeError, ValueError):
-            raw = self.settings.get(key)
-        value = self.settings.set(key, raw)     # set() 会按范围夹取
-        var.set(self._spin_text(key))
-        self.on_change(key, value)
 
     def _entry(self, parent, text, key, hint=None, secret=False):
         row = ttk.Frame(parent)
@@ -412,8 +371,6 @@ class SettingsWindow:
             for key, scale in self._scales.items():
                 scale.set(self.settings.get(key))
                 self._show_value(key)
-            for key, var in self._spins.items():
-                var.set(self._spin_text(key))
             for key, var in self._radios.items():
                 var.set(str(self.settings.get(key)))
             self._fill_voices()
