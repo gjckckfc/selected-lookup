@@ -433,4 +433,5 @@ logs/app.log         运行日志
 
 ## 许可
 
-本项目代码 MIT。词典数据来自 ECDICT（MIT），详见 [NOTICE.md](NOTICE.md)。
+本项目代码 MIT，全文见 [LICENSE](LICENSE)。词典数据来自 ECDICT（MIT），
+其中少数派生词表来自 NGSL/NAWL/BSL/TOEIC（CC BY-SA 4.0），详见 [NOTICE.md](NOTICE.md)。
