@@ -1,16 +1,20 @@
 # -*- coding: utf-8 -*-
-"""本地朗读: 用 Windows 自带的语音合成, 不联网、不要密钥。
+"""朗读: 用系统语音 + 微软神经网络语音(经第三方适配器), 不要密钥。
 
 做法:
   - 启动后在后台查一遍系统装了哪些语音, 挑一个英语的、一个中文的
   - 常驻一个 PowerShell 进程(System.Speech)当合成器: stdin 发任务, stdout 收结果
   - 合成结果写进 data/voice_cache/, 同一个词/句只合成一次, 之后零延迟
-  - 播放走系统 MCI 接口(open/play/stop/close): 收到新请求先显式停掉上一句,
-    所以"正在念原文时点了单词"会立刻断掉原文改念单词
+  - 播放走系统 MCI 接口, 而且所有 MCI 调用都在一个专用线程里发出
+    (MCI 设备属于"打开它的线程", 跨线程 stop 是停不掉的)
+  - 收到新请求先停掉上一句, 所以"正在念原文时点了单词"会立刻断掉原文改念单词
 
 为什么用 PowerShell 而不是纯 ctypes: 系统语音是一套 COM 接口, 纯 ctypes
 要手写两百行指针操作, 出错就是整个进程崩溃。让系统自带的 PowerShell 承载,
 零第三方依赖, 真出问题也只挂在子进程里。
+
+注意: 名字带 Online 的是微软服务器的神经网络语音(也就是 Edge 朗读那一批),
+合成时会把文字发给微软; 系统里装的本地语音则完全离线。两者都不要密钥、不花钱。
 """
 from __future__ import annotations
 
@@ -44,6 +48,10 @@ CREATE_NO_WINDOW = 0x08000000
 # (进程约 75 MB; 用户明确说可以接受, 所以留足 5 分钟, 避免频繁重启的等待)
 IDLE_SECONDS = 300
 REAP_INTERVAL = 15
+
+# 音频缓存上限: 超了就从最旧的开始删, 别让它无限长(长句子一个就 1-2 MB)
+CACHE_LIMIT_MB = 200
+CACHE_TRIM_EVERY = 60        # 最快多久检查一次缓存大小
 
 LIST_VOICES = (
     "[Console]::OutputEncoding=[Text.Encoding]::UTF8;"
@@ -190,6 +198,7 @@ class Speech:
         self._started = False
         self._closed = False
         self._last_used = 0.0
+        self._last_trim = 0.0
         self._generation = 0
         self.preparing = False
 
@@ -232,6 +241,47 @@ class Speech:
             self.voice_en, self.voice_zh or "无", idle))
         threading.Thread(target=self._reap_loop, name="speech-reap",
                          daemon=True).start()
+        self._maybe_trim_cache()      # 启动时顺手把超限的缓存清一清
+
+    def _trim_cache(self):
+        """清理音频缓存: 先扔掉"半截"的旧文件, 再按最旧的删到上限以内。"""
+        if self.cache_dir is None or not self.cache_dir.exists():
+            return
+        try:
+            items = [(p.stat().st_mtime, p.stat().st_size, p)
+                     for p in self.cache_dir.glob("*.wav")]
+        except OSError:
+            return
+        # 半截文件是中断留下的残file; 只动一小时前的, 免得删掉正在写的
+        stale = time.time() - 3600
+        keep = []
+        junk = 0
+        for mtime, size, path in items:
+            if mtime < stale and not _wav_complete(path):
+                try:
+                    path.unlink()
+                    junk += 1
+                    continue
+                except OSError:
+                    pass
+            keep.append((mtime, size, path))
+        items = keep
+        limit = CACHE_LIMIT_MB * 1024 * 1024
+        total = sum(size for _m, size, _p in items)
+        removed = 0
+        if total > limit:
+            items.sort()
+            for _mtime, size, path in items:
+                if total <= limit * 0.8:
+                    break
+                try:
+                    path.unlink()
+                    total -= size
+                    removed += 1
+                except OSError:
+                    continue
+        if removed or junk:
+            self.log("朗读缓存清理: 半截文件 %d 个, 超限删除 %d 个" % (junk, removed))
 
     def _ensure_worker(self):
         """按需拉起合成进程, 已经活着就直接用。"""
@@ -434,7 +484,8 @@ class Speech:
             try:
                 path.unlink()
             except OSError:
-                pass
+                # 删不掉说明可能正被播放器占着: 换个文件名合成, 别去动它
+                path = path.with_name("%s_%d.wav" % (path.stem, time.time_ns() % 1000000))
         return self._synthesize(text, voice, rate, path)
 
     def _wait_wav(self, path, timeout=3.0):
@@ -472,7 +523,17 @@ class Speech:
         if not self._wait_wav(path):
             self.log("朗读失败: 音频文件没写完")
             return None
+        self._maybe_trim_cache()
         return path
+
+    def _maybe_trim_cache(self):
+        """合成完顺手看看缓存是不是太大了(最快每 60 秒查一次)。"""
+        now = time.monotonic()
+        if now - self._last_trim < CACHE_TRIM_EVERY:
+            return
+        self._last_trim = now
+        threading.Thread(target=self._trim_cache, name="speech-trim",
+                         daemon=True).start()
 
     def _cache_path(self, text, voice, rate):
         if self.cache_dir is None:

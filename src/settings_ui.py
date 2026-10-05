@@ -45,6 +45,8 @@ class SettingsWindow:
         self.win = None
         self._loading = False
         self._scales = {}
+        self._pending_scale = {}
+        self._scale_timer = None
         self._value_labels = {}
         self._checks = {}
         self._radios = {}
@@ -344,17 +346,32 @@ class SettingsWindow:
         self.on_change(key, self.settings.get(key))
 
     def _on_scale(self, key, raw):
+        """拖动时只更新显示, 停手 0.4 秒才落盘——别每一步都写一次配置文件。"""
         if self._loading:
             return
         step = self._value_labels[key][1]
         value = round(float(raw) / step) * step
-        self.settings.set(key, value)
-        self._show_value(key)
-        self.on_change(key, self.settings.get(key))
+        self._pending_scale[key] = value
+        self._show_value(key, value)
+        if self._scale_timer:
+            try:
+                self.win.after_cancel(self._scale_timer)
+            except Exception:
+                pass
+        self._scale_timer = self.win.after(400, lambda k=key: self._commit_scale(k))
 
-    def _show_value(self, key):
+    def _commit_scale(self, key):
+        self._scale_timer = None
+        value = self._pending_scale.pop(key, None)
+        if value is None:
+            return
+        saved = self.settings.set(key, value)
+        self.on_change(key, saved)
+
+    def _show_value(self, key, value=None):
         label, step, unit, fmt = self._value_labels[key]
-        value = self.settings.get(key)
+        if value is None:
+            value = self.settings.get(key)
         if fmt:
             text = fmt(value)
         else:
@@ -366,6 +383,13 @@ class SettingsWindow:
             return
         self._loading = True
         try:
+            if self._scale_timer:
+                try:
+                    self.win.after_cancel(self._scale_timer)
+                except Exception:
+                    pass
+                self._scale_timer = None
+            self._pending_scale.clear()
             for key, var in self._checks.items():
                 var.set(bool(self.settings.get(key)))
             for key, scale in self._scales.items():
