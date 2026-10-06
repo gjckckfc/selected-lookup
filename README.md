@@ -77,7 +77,7 @@ python src/main.py
 **重复启动不会开出第二个**：程序同一时间只允许跑一个。你要是又点了一次启动，
 它不会变成两个图标、两套钩子，而是把已经在跑的那个的**设置窗口**叫到前面来。
 
-### 建快捷方式 / 开机自启（可选）
+### 建快捷方式 / 开机自启（从源码跑时才需要）
 
 ```powershell
 python scripts/install_shortcuts.py
@@ -465,12 +465,16 @@ src/paths.py         用户数据都放在 %APPDATA%\选中即查 下的路径�
 src/single_instance.py  单实例锁(重复启动不会开出第二个)
 src/dictpack.py      词典的下载/校验/解包/建索引(脚本和向导共用一套)
 src/setup_wizard.py  第一次运行时的准备向导(带进度的下载窗口)
+src/appinfo.py       程序名字和版本号(只此一处)
+src/shortcuts.py     快捷方式/开机自启/安装/卸载(命令行和 exe 共用一套)
 scripts/fetch_dict.py    下载并校验词典
 scripts/build_index.py   构建词形索引
 scripts/preview_popup.py 调试用: 单独预览浮窗外观
 scripts/install_shortcuts.py  建桌面/开始菜单快捷方式 + 开机自启
 scripts/remove_shortcuts.py   撤销上面这些(不动用户数据)
-scripts/build_exe.py          打包成免安装的 exe(开发者用)
+scripts/build_exe.py          打包 exe + 整理发布包(开发者用)
+packaging/安装.bat            发布包里给用户双击的安装脚本
+packaging/卸载.bat            对应的卸载脚本
 ```
 
 上面这些是代码。**数据不在程序目录里**，都在：
@@ -483,16 +487,32 @@ scripts/build_exe.py          打包成免安装的 exe(开发者用)
 %APPDATA%\选中即查\logs\app.log   运行日志
 ```
 
-## 打包成 exe（开发者）
+## 打包发布（开发者）
 
-想发给**没装 Python** 的人，用：
+想发给**没装 Python** 的人：
 
 ```powershell
 python scripts/build_exe.py
 ```
 
-产出在 `dist\选中即查\`（约 27 MB），**整个文件夹一起分发**。对方双击
-`选中即查.exe` 就能用，不需要装 Python、也不需要装任何东西。
+一次产出三样东西：
+
+```
+dist\选中即查\              程序本体（PyInstaller 的产物）
+dist\选中即查-1.0\          发布包：程序 + 安装.bat + 卸载.bat + 说明.txt
+dist\选中即查-1.0.zip       直接当 GitHub Release 的附件发出去
+```
+
+把压缩包发给别人，对方解压后**双击「安装.bat」**即可。安装会把程序放到
+`%LOCALAPPDATA%\Programs\选中即查\`，建好桌面和开始菜单的快捷方式、设好开机自启，
+全程不需要管理员权限。不想用了双击「卸载.bat」——**生词本和设置都会留着**。
+
+装到固定位置而不是"就地运行"，是因为对方可能把解压出来的文件夹删掉或挪走，
+那样快捷方式就全断了。
+
+版本号写在 `src/appinfo.py`，改完重新打包。它会写进 exe 的文件属性
+（右键 → 属性 → 详细信息 里能看到），也显示在托盘右键菜单的「关于」里，
+还会出现在发布包的文件名上。
 
 打包要先 `python -m pip install pyinstaller`。它只在**打包这台机器**上用；
 用户那边不受影响，运行时依然是零第三方依赖。

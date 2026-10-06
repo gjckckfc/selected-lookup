@@ -14,6 +14,8 @@ import ctypes
 import threading
 from ctypes import wintypes
 
+import appinfo
+
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 shell32 = ctypes.WinDLL("shell32", use_last_error=True)
@@ -44,6 +46,9 @@ ID_SETTINGS = 1003
 ID_QUIT = 1002
 ID_NOTEBOOK_TOGGLE = 1004
 ID_NOTEBOOK_OPEN = 1005
+ID_ABOUT = 1006
+
+MB_ICONINFORMATION = 0x00000040
 
 CALLBACK_MESSAGE = WM_APP + 1
 # 第二个实例启动时, 会往托盘窗口投这个消息, 让它把设置窗口叫出来
@@ -131,7 +136,14 @@ user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, w
 user32.PostQuitMessage.argtypes = [ctypes.c_int]
 user32.SetForegroundWindow.argtypes = [wintypes.HWND]
 user32.DestroyMenu.argtypes = [wintypes.HMENU]
+user32.MessageBoxW.argtypes = [wintypes.HWND, wintypes.LPCWSTR,
+                               wintypes.LPCWSTR, wintypes.UINT]
 shell32.Shell_NotifyIconW.argtypes = [wintypes.DWORD, ctypes.POINTER(NOTIFYICONDATAW)]
+
+
+def message_box(title, text, icon=MB_ICONINFORMATION):
+    """弹一个最简单的系统消息框。不依赖 tkinter, 随便哪个线程都能调。"""
+    return user32.MessageBoxW(None, text, title, icon)
 
 
 def make_icon_data(rgb, size=ICON_SIZE, radius=None):
@@ -194,7 +206,7 @@ class TrayIcon:
 
     def __init__(self, enabled=True, api_ready=True, on_toggle=None, on_quit=None,
                  on_settings=None, notebook_enabled=True,
-                 on_notebook_toggle=None, on_notebook_open=None,
+                 on_notebook_toggle=None, on_notebook_open=None, on_about=None,
                  tip="选中即查", logger=None):
         self.enabled = enabled
         self.api_ready = bool(api_ready)
@@ -204,6 +216,7 @@ class TrayIcon:
         self.on_settings = on_settings
         self.on_notebook_toggle = on_notebook_toggle
         self.on_notebook_open = on_notebook_open
+        self.on_about = on_about
         self.tip = tip
         self.log = logger or (lambda message: None)
 
@@ -264,6 +277,9 @@ class TrayIcon:
         user32.AppendMenuW(menu, MF_STRING, ID_NOTEBOOK_OPEN, "打开生词本")
         user32.AppendMenuW(menu, MF_STRING, ID_SETTINGS, "设置...")
         user32.AppendMenuW(menu, MF_SEPARATOR, 0, None)
+        user32.AppendMenuW(menu, MF_STRING, ID_ABOUT,
+                           "关于 %s %s" % (appinfo.APP_NAME, appinfo.VERSION))
+        user32.AppendMenuW(menu, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(menu, MF_STRING, ID_QUIT, "退出")
 
         point = wintypes.POINT()
@@ -283,6 +299,8 @@ class TrayIcon:
             self._fire("on_notebook_open", "tray notebook open error")
         elif choice == ID_SETTINGS:
             self._fire("on_settings", "tray settings error")
+        elif choice == ID_ABOUT:
+            self._fire("on_about", "tray about error")
         elif choice == ID_QUIT:
             self._fire("on_quit", "tray quit error")
 

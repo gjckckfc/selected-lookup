@@ -31,11 +31,14 @@ else:
     sys.path.insert(0, str(ROOT / "src"))
 
 from app import App  # noqa: E402
+import appinfo  # noqa: E402
 import dictpack  # noqa: E402
 import paths  # noqa: E402
 from setup_wizard import SetupWizard  # noqa: E402
+import shortcuts  # noqa: E402
 import single_instance  # noqa: E402
-from tray import CALLBACK_MESSAGE, SHOW_SETTINGS_MESSAGE, WINDOW_CLASS  # noqa: E402
+from tray import (CALLBACK_MESSAGE, SHOW_SETTINGS_MESSAGE, WINDOW_CLASS,  # noqa: E402
+                  message_box)
 
 
 def _log_line(path, message):
@@ -47,6 +50,30 @@ def _log_line(path, message):
             handle.write("%s  %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), message))
     except OSError:
         pass
+
+
+def _run_installer(args):
+    """--install / --uninstall: 只办安装这件事, 不启动取词。
+
+    做完弹一个系统消息框 —— 打包版没有控制台窗口, 不弹框的话用户什么都看不见。
+    """
+    paths.ensure(paths.data_root())
+    try:
+        if args.install:
+            notes = shortcuts.install(autostart=True,
+                                      log=lambda m: _log_line(args.log, m))
+            title = "%s %s · 安装完成" % (appinfo.APP_NAME, appinfo.VERSION)
+        else:
+            notes = shortcuts.uninstall(log=lambda m: _log_line(args.log, m))
+            title = "%s · 已卸载" % appinfo.APP_NAME
+    except Exception as exc:          # noqa: BLE001 - 出错也得让用户看见
+        _log_line(args.log, "安装/卸载失败: %s" % exc)
+        message_box("%s · 出错" % appinfo.APP_NAME, "没能完成：\n\n%s" % exc, 0x10)
+        return 1
+    for line in notes:
+        _log_line(args.log, "  " + line)
+    message_box(title, "\n".join(notes))
+    return 0
 
 
 def main(argv=None):
@@ -66,7 +93,17 @@ def main(argv=None):
     parser.add_argument("--log", default=str(data_dir / "logs" / "app.log"))
     parser.add_argument("--notebook", default=str(data_dir / "vocabulary"),
                         help="生词本目录")
+    parser.add_argument("--install", action="store_true",
+                        help="建快捷方式和开机自启（安装）")
+    parser.add_argument("--uninstall", action="store_true",
+                        help="撤销快捷方式和开机自启（不动用户数据）")
+    parser.add_argument("--version", action="version",
+                        version="%s %s" % (appinfo.APP_NAME, appinfo.VERSION))
     args = parser.parse_args(argv)
+
+    # 安装/卸载不启动程序本身, 做完弹个框告诉用户结果就退出
+    if args.install or args.uninstall:
+        return _run_installer(args)
 
     if not single_instance.acquire():
         told = single_instance.notify_existing(

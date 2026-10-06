@@ -22,6 +22,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import appinfo  # noqa: E402
+import paths  # noqa: E402
 from capture import MOD_ALT, MOD_CONTROL, SelectionWatcher  # noqa: E402
 from dictionary import Dictionary  # noqa: E402
 from notebook import Notebook  # noqa: E402
@@ -113,6 +115,7 @@ class App:
             on_notebook_toggle=lambda: self.commands.put("notebook_toggle"),
             on_notebook_open=lambda: self.commands.put("notebook_open"),
             on_settings=lambda: self.commands.put("settings"),
+            on_about=lambda: self.commands.put("about"),
             on_quit=lambda: self.commands.put("quit"),
             logger=self.log,
         )
@@ -336,6 +339,28 @@ class App:
         self.log("打开设置窗口")
         self.settings_window.open()
 
+    def _show_about(self):
+        """托盘右键 → 关于。顺手把"我的数据在哪儿"告诉用户, 免得他找不到生词本。"""
+        from tray import message_box
+        try:
+            stats = self.dictionary.stats()
+            counts = "词典 %s 条，词形还原 %s 条" % (
+                format(stats["entries"], ","), format(stats["forms"], ","))
+        except Exception:
+            counts = "词典信息读不到"
+        text = "\n".join([
+            "%s %s" % (appinfo.APP_NAME, appinfo.VERSION),
+            "",
+            counts,
+            "",
+            "你的数据都在这里：",
+            str(paths.data_root()),
+            "",
+            "（生词本在 vocabulary 子文件夹里；卸载不会删它们）",
+        ])
+        self.log("打开关于")
+        message_box("%s %s" % (appinfo.APP_NAME, appinfo.VERSION), text)
+
     # ------------------------------------------------------------------
 
     def _pump(self):
@@ -356,6 +381,8 @@ class App:
                     self.popup.hide()
                 elif command == "settings":
                     self._open_settings()
+                elif command == "about":
+                    self._show_about()
         except queue.Empty:
             pass
 
