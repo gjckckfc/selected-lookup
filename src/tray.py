@@ -46,7 +46,13 @@ ID_NOTEBOOK_TOGGLE = 1004
 ID_NOTEBOOK_OPEN = 1005
 
 CALLBACK_MESSAGE = WM_APP + 1
+# 第二个实例启动时, 会往托盘窗口投这个消息, 让它把设置窗口叫出来
+SHOW_SETTINGS_MESSAGE = WM_APP + 2
+# 托盘窗口的类名。用固定名字(不是动态生成), 这样单实例那边才 FindWindow 得到。
+WINDOW_CLASS = "LookupTrayWnd"
 ICON_SIZE = 32
+
+ERROR_CLASS_ALREADY_EXISTS = 1410
 
 # 状态灯只分"开"和"关"两大块:
 #   开   -> 绿（不管 API 有没有接）
@@ -230,6 +236,9 @@ class TrayIcon:
                 # WM_LBUTTONDBLCLK 有意不处理: 双击时 Windows 会先发一次
                 # 单击再发双击, 那"一次单击"照常生效, 双击本身不额外做事。
                 self._fire_toggle()
+            elif l_param == SHOW_SETTINGS_MESSAGE:
+                # 有人又启动了一次程序: 把设置窗口叫到前面来, 而不是装死
+                self._fire("on_settings", "tray settings error")
             elif l_param == WM_RBUTTONUP:
                 self._show_menu()
             return 0
@@ -331,16 +340,19 @@ class TrayIcon:
     def run(self):
         """阻塞运行消息循环。请放在独立线程里。"""
         hinst = kernel32.GetModuleHandleW(None)
-        name = "LookupTrayWnd_%d" % id(self)
+        name = WINDOW_CLASS
         wc = WNDCLASSW()
         wc.lpfnWndProc = self._proc
         wc.hInstance = hinst
         wc.lpszClassName = name
         atom = user32.RegisterClassW(ctypes.byref(wc))
         if not atom:
-            self.log("RegisterClassW 失败, 错误码 %d" % ctypes.get_last_error())
-            self._ready.set()
-            return
+            code = ctypes.get_last_error()
+            if code != ERROR_CLASS_ALREADY_EXISTS:
+                self.log("RegisterClassW 失败, 错误码 %d" % code)
+                self._ready.set()
+                return
+            # 同一个进程里已经注册过这个名字, 直接用就行
         self._class_atom = atom
         self._hwnd = user32.CreateWindowExW(0, name, name, 0, 0, 0, 0, 0,
                                             None, None, hinst, None)

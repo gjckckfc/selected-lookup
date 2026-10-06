@@ -326,6 +326,7 @@ class App:
         self.log("已恢复默认设置")
 
     def _open_settings(self):
+        self.log("打开设置窗口")
         self.settings_window.open()
 
     # ------------------------------------------------------------------
