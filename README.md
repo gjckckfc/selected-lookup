@@ -69,6 +69,26 @@ python src/main.py
 **重复启动不会开出第二个**：程序同一时间只允许跑一个。你要是又点了一次启动，
 它不会变成两个图标、两套钩子，而是把已经在跑的那个的**设置窗口**叫到前面来。
 
+### 建快捷方式 / 开机自启（可选）
+
+```powershell
+python scripts/install_shortcuts.py
+```
+
+做三件事，全都只动当前用户、**不需要管理员**：
+
+1. 生成一个绿色圆点的图标
+2. 在**桌面**和**开始菜单**各建一个「选中即查」快捷方式
+3. 加进**开机自启**（写在 `HKCU\...\Run` 里，所以任务管理器的「启动」页能看到它，也能单独关掉）
+
+想撤销就跑：
+
+```powershell
+python scripts/remove_shortcuts.py
+```
+
+它只删快捷方式和自启项，**不动你的生词本和设置**。
+
 ## 开关（任务栏托盘图标）
 
 启动后任务栏右下角会出现一个圆点，它就是开关:
@@ -438,6 +458,8 @@ src/single_instance.py  单实例锁(重复启动不会开出第二个)
 scripts/fetch_dict.py    下载并校验词典
 scripts/build_index.py   构建词形索引
 scripts/preview_popup.py 调试用: 单独预览浮窗外观
+scripts/install_shortcuts.py  建桌面/开始菜单快捷方式 + 开机自启
+scripts/remove_shortcuts.py   撤销上面这些(不动用户数据)
 ```
 
 上面这些是代码。**数据不在程序目录里**，都在：
