@@ -19,6 +19,11 @@ desktop.ini
 # 运行时日志
 logs/
 
+# 打包产物（scripts/build_exe.py 生成）
+build/
+dist/
+*.spec
+
 # 生词本（用户数据不入库; vocabulary/README.md 是格式说明, 保留）
 vocabulary/raw/
 vocabulary/curated/

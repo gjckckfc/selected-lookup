@@ -22,8 +22,13 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "src"))
+if getattr(sys, "frozen", False):
+    # 打包之后: 用的就是 dist 里那个文件夹（其实什么都没用到, 只是保持一致的语义）。
+    # 代码已经被 PyInstaller 打进包了, 不需要再往 sys.path 里塞东西。
+    ROOT = Path(sys.executable).resolve().parent
+else:
+    ROOT = Path(__file__).resolve().parent.parent
+    sys.path.insert(0, str(ROOT / "src"))
 
 from app import App  # noqa: E402
 import dictpack  # noqa: E402

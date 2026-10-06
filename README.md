@@ -470,6 +470,7 @@ scripts/build_index.py   构建词形索引
 scripts/preview_popup.py 调试用: 单独预览浮窗外观
 scripts/install_shortcuts.py  建桌面/开始菜单快捷方式 + 开机自启
 scripts/remove_shortcuts.py   撤销上面这些(不动用户数据)
+scripts/build_exe.py          打包成免安装的 exe(开发者用)
 ```
 
 上面这些是代码。**数据不在程序目录里**，都在：
@@ -481,6 +482,26 @@ scripts/remove_shortcuts.py   撤销上面这些(不动用户数据)
 %APPDATA%\选中即查\settings.json  个人设置(不入库, 含 API 密钥)
 %APPDATA%\选中即查\logs\app.log   运行日志
 ```
+
+## 打包成 exe（开发者）
+
+想发给**没装 Python** 的人，用：
+
+```powershell
+python scripts/build_exe.py
+```
+
+产出在 `dist\选中即查\`（约 27 MB），**整个文件夹一起分发**。对方双击
+`选中即查.exe` 就能用，不需要装 Python、也不需要装任何东西。
+
+打包要先 `python -m pip install pyinstaller`。它只在**打包这台机器**上用；
+用户那边不受影响，运行时依然是零第三方依赖。
+
+用的是"文件夹版"（onedir）不是"单文件版"（onefile）：单文件 exe 每次启动都要先把
+几十 MB 解压到临时目录，得等 2–5 秒；这个工具是常驻后台、开机自启的，那几秒天天
+都得吃一次。
+
+打包后常驻内存实测 **56 MB**，和源码版（55 MB）几乎一样。
 
 ## 已知边界
 
