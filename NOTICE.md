@@ -30,6 +30,29 @@
 GRE、GMAT、TEM4/8、商务 5000、日常 3000）各自的来源与许可见
 `focus_word_list_meta` 表的 `source_name` / `license` 字段。
 
+其中 11 张来自 ECDICT 自带的考试标签与词频字段，随 ECDICT 的 MIT 许可；
+**剩下 2 张的来源不是 ECDICT，许可是 CC BY-SA 4.0**，需要单独署名：
+
+| 词表 | 来源 |
+|---|---|
+| GMAT | NGSL / NAWL / BSL / TOEIC + ECDICT 的 gre & toefl |
+| 商务 5000 | TOEIC 1.2 + BSL 1.2 + NGSL 1.2 |
+
+### CC BY-SA 4.0 署名
+
+上面两张词表用到的源词表来自 <https://www.newgeneralservicelist.org/>，
+快照取自 `nltk-data-hub/words`（commit `1834637f1b759aad676cc47cb71708700bf8c2b4`）：
+
+- New General Service List 1.2 — Charles Browne
+- New Academic Word List 1.2 — Charles Browne, Brent Culligan, Joseph Phillips
+- Business Service List 1.2 — Charles Browne, Brent Culligan
+- TOEIC Service List 1.2 — Charles Browne, Brent Culligan
+
+许可全文：<https://creativecommons.org/licenses/by-sa/4.0/>
+
+相应的派生数据（`focus_word_memberships` 里那两张表的成员关系）按
+**CC BY-SA 4.0** 分发，署名同上。其余 11 张词表随 ECDICT 的 MIT 许可。
+
 ## 分发提醒
 
 词典数据体积较大（约 130 MB），没有纳入版本库。若要对外分发本项目，
