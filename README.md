@@ -41,6 +41,23 @@ python scripts/fetch_dict.py
 python scripts/build_index.py
 ```
 
+词典和索引会下到**用户数据目录**里：
+
+```
+%APPDATA%\选中即查\data\         词典和索引（第一次运行时下载）
+%APPDATA%\选中即查\settings.json  设置（含 API 密钥）
+%APPDATA%\选中即查\vocabulary\    生词本
+%APPDATA%\选中即查\logs\          日志
+%APPDATA%\选中即查\cache\         翻译缓存 + 语音缓存
+```
+
+**为什么要放这儿**：程序以后可能装在 `C:\Program Files`，那里普通程序不能写。
+数据放在用户目录，改设置、写生词本才不会静默失败；以后升级或重装程序，
+生词本也不会被覆盖。程序目录里只留代码。
+
+（如果你是从旧版升级过来的：程序第一次启动时会自动把老位置的数据**复制**过来，
+原文件保留当备份，可以自己确认没问题后再删。词典是只读的，不会复制，直接就地读。）
+
 ## 运行
 
 ```powershell
@@ -399,7 +416,7 @@ vocabulary/
   RT_ICON 数据（`CreateIconFromResourceEx`），所以依然零第三方依赖。
 - **朗读**: 用 Windows 自带的语音引擎（`System.Speech`）在后台合成成 wav,
   再用系统的 MCI 接口播放（可以精确打断上一句）。合成进程按需拉起、闲 5 分钟回收,
-  结果按内容哈希缓存在 `data/voice_cache/`, 同一个词/句第二次是零延迟。
+  结果按内容哈希缓存在 `%APPDATA%\选中即查\cache\voice_cache\`, 同一个词/句第二次是零延迟。
 - **性能**: 钩子回调里只做算术和投递, 慢活全部丢给取词线程,
   不会拖慢系统鼠标响应。
 
@@ -416,14 +433,21 @@ src/notebook.py      生词本: 自动沉淀成 Markdown
 src/speech.py        本地朗读: 系统语音合成 + 缓存
 src/app.py           组装与线程调度
 src/main.py          入口
+src/paths.py         用户数据都放在 %APPDATA%\选中即查 下的路径规则
+src/single_instance.py  单实例锁(重复启动不会开出第二个)
 scripts/fetch_dict.py    下载并校验词典
 scripts/build_index.py   构建词形索引
 scripts/preview_popup.py 调试用: 单独预览浮窗外观
-data/                词典数据(不入库, 约 180 MB)
-vocabulary/          生词本(不入库, 只有 README 入库)
-data/voice_cache/    朗读音频缓存(不入库, 可随时删)
-settings.json        个人设置(不入库, 首次改设置时生成)
-logs/app.log         运行日志
+```
+
+上面这些是代码。**数据不在程序目录里**，都在：
+
+```
+%APPDATA%\选中即查\data\          词典(约 130 MB, 不入库)
+%APPDATA%\选中即查\vocabulary\    生词本(不入库)
+%APPDATA%\选中即查\cache\         翻译缓存 + 朗读音频缓存(不入库, 可随时删)
+%APPDATA%\选中即查\settings.json  个人设置(不入库, 含 API 密钥)
+%APPDATA%\选中即查\logs\app.log   运行日志
 ```
 
 ## 已知边界

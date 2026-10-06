@@ -11,6 +11,9 @@
 
 同一时间只允许跑一个: 再启动一次不会开出第二个进程, 而是把已经那个的设置窗口
 叫到前面来（见 single_instance.py）。
+
+用户数据（设置 / 生词本 / 日志 / 缓存）都放在 %APPDATA%\选中即查 下, 不写在
+程序目录里 —— 打包后程序目录是只读的（见 paths.py）。
 """
 from __future__ import annotations
 
@@ -23,6 +26,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
 from app import App  # noqa: E402
+import paths  # noqa: E402
 import single_instance  # noqa: E402
 from tray import CALLBACK_MESSAGE, SHOW_SETTINGS_MESSAGE, WINDOW_CLASS  # noqa: E402
 
@@ -39,13 +43,21 @@ def _log_line(path, message):
 
 
 def main(argv=None):
+    data_dir = paths.data_root()
+
     parser = argparse.ArgumentParser(description="选中即查 · 英汉词典浮窗")
-    parser.add_argument("--db", default=str(ROOT / "data" / "ecdict.sqlite"))
-    parser.add_argument("--index", default=str(ROOT / "data" / "inflection.sqlite"))
-    parser.add_argument("--settings", default=str(ROOT / "settings.json"),
+    # 词典是只读的, 所以先看新家、没有就用程序目录里那份: 从源码跑的老用户
+    # 不用为了升级把 130 MB 复制一遍。
+    parser.add_argument("--db", default=str(
+        paths.find_data_file(ROOT, "ecdict.sqlite", data_dir)))
+    parser.add_argument("--index", default=str(
+        paths.find_data_file(ROOT, "inflection.sqlite", data_dir)))
+    parser.add_argument("--cache", default=str(data_dir / "cache"),
+                        help="翻译 / 语音缓存目录")
+    parser.add_argument("--settings", default=str(data_dir / "settings.json"),
                         help="设置文件路径")
-    parser.add_argument("--log", default=str(ROOT / "logs" / "app.log"))
-    parser.add_argument("--notebook", default=str(ROOT / "vocabulary"),
+    parser.add_argument("--log", default=str(data_dir / "logs" / "app.log"))
+    parser.add_argument("--notebook", default=str(data_dir / "vocabulary"),
                         help="生词本目录")
     args = parser.parse_args(argv)
 
@@ -55,6 +67,10 @@ def main(argv=None):
         _log_line(args.log, "又启动了一次: 已有实例在跑, %s" % (
             "已把它的设置窗口叫到前面" if told else "但没找到它的窗口"))
         return 0
+
+    # 该建的目录建出来, 顺便把老位置的数据复制过来（只做一次）
+    paths.ensure(data_dir)
+    paths.migrate(ROOT, data_dir, log=lambda m: _log_line(args.log, m))
 
     index = args.index
     if not Path(index).exists():
@@ -68,6 +84,7 @@ def main(argv=None):
         settings=args.settings,
         log_path=args.log,
         notebook_dir=args.notebook,
+        cache_dir=args.cache,
     )
     app.run()
     return 0

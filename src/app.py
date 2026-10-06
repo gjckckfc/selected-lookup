@@ -42,7 +42,7 @@ SPEAK_MAX_CHARS = 200
 
 class App:
     def __init__(self, db_path, index_path=None, settings=None, log_path=None,
-                 notebook_dir=None):
+                 notebook_dir=None, cache_dir=None):
         self.log_path = Path(log_path) if log_path else None
         self.settings_path = Path(settings) if settings else None
         if self.settings_path:
@@ -52,9 +52,16 @@ class App:
             from settings import Settings
             self.settings = Settings(Path(__file__).resolve().parent.parent / "settings.json")
 
+        # 缓存要写在**可写**的地方: 打包后词典可能躺在只读的程序目录里,
+        # 所以不能让缓存跟着词典走。没显式给 cache_dir 时退回老行为。
+        cache_root = Path(cache_dir) if cache_dir else Path(db_path).resolve().parent
+        try:
+            cache_root.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            self.log("缓存目录建不出来(%s): %s" % (cache_root, exc))
         self.dictionary = Dictionary(db_path, index_path)
         self.translator = Translator(
-            Path(db_path).resolve().parent / "translate_cache.sqlite", logger=self.log)
+            cache_root / "translate_cache.sqlite", logger=self.log)
         self._reload_translator()
         self.translate_results = queue.Queue()
         self._translate_seq = 0
@@ -64,7 +71,7 @@ class App:
         self.speech_events = queue.Queue()
         self._speak_seq = 0
         self.speech = Speech(
-            cache_dir=Path(db_path).resolve().parent / "voice_cache",
+            cache_dir=cache_root / "voice_cache",
             logger=self.log,
             enabled=bool(self.settings.get("speak_enabled")),
         )

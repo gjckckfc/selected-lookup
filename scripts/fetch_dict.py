@@ -16,7 +16,13 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DATA_DIR = ROOT / "data"
+sys.path.insert(0, str(ROOT / "src"))
+import paths  # noqa: E402
+
+# 词典装到用户数据目录（%APPDATA%\选中即查\data）, 不装程序目录:
+# 打包后程序目录是只读的, 下不进去。老位置那份还能用, 见 find_existing_db。
+DATA_DIR = paths.data_root() / "data"
+LEGACY_DIR = ROOT / "data"
 
 ARCHIVE_NAME = "ecdict-ecdict-bc015ed2-focus13-v2.zip"
 ARCHIVE_SHA256 = "1e745ea698878772226a7df584129409dd4b27cb7ea26b4259bc770e7533352f"
@@ -81,15 +87,36 @@ def verify_db(db_path: Path) -> bool:
     return True
 
 
+def find_existing_db():
+    """新家和老位置都找一遍, 有能用的就直接用。"""
+    for folder in (DATA_DIR, LEGACY_DIR):
+        candidate = folder / DB_NAME
+        if candidate.exists() and candidate.stat().st_size == DB_SIZE:
+            if verify_db(candidate):
+                return candidate
+    return None
+
+
 def main() -> int:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     archive = DATA_DIR / ARCHIVE_NAME
     db_path = DATA_DIR / DB_NAME
 
-    if db_path.exists() and verify_db(db_path):
-        print("词典已就绪: %s" % db_path)
+    existing = find_existing_db()
+    if existing:
+        print("词典已就绪: %s" % existing)
         print("下一步: python scripts/build_index.py")
         return 0
+
+    # 老位置留着的下载包也能用, 省一次 52 MB 下载
+    if not archive.exists():
+        for folder in (DATA_DIR, LEGACY_DIR):
+            candidate = folder / ARCHIVE_NAME
+            if (candidate.exists() and candidate.stat().st_size == ARCHIVE_SIZE
+                    and sha256_of(candidate) == ARCHIVE_SHA256):
+                archive = candidate
+                print("复用已下载的压缩包: %s" % archive)
+                break
 
     if archive.exists() and archive.stat().st_size == ARCHIVE_SIZE and sha256_of(archive) == ARCHIVE_SHA256:
         print("归档已在本地且校验通过，跳过下载。")

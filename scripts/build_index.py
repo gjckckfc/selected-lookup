@@ -4,7 +4,8 @@
 ECDICT 只在每个词条上记录"它自己的各种变形"，没有反向索引。
 这里把它翻转成 变形 -> 原形 的表，用于 ran -> run、studies -> study 这类查询。
 
-输出: data/inflection.sqlite  (表 forms(form PRIMARY KEY, word))
+输出: 词典旁边的 inflection.sqlite  (表 forms(form PRIMARY KEY, word))
+      词典在 %APPDATA%\\选中即查\\data 或程序目录的 data\\ 下, 索引写在它旁边。
 """
 from __future__ import annotations
 
@@ -14,9 +15,22 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DATA_DIR = ROOT / "data"
-SOURCE_DB = DATA_DIR / "ecdict.sqlite"
-INDEX_DB = DATA_DIR / "inflection.sqlite"
+sys.path.insert(0, str(ROOT / "src"))
+import paths  # noqa: E402
+
+
+def find_source_db():
+    """词典在哪就用哪份: 先用户数据目录, 再程序目录。"""
+    for folder in (paths.data_root() / "data", ROOT / "data"):
+        candidate = folder / "ecdict.sqlite"
+        if candidate.exists():
+            return candidate
+    return paths.data_root() / "data" / "ecdict.sqlite"
+
+
+# 索引跟着词典走: 词典在哪, 索引就写在它旁边。
+SOURCE_DB = find_source_db()
+INDEX_DB = SOURCE_DB.parent / "inflection.sqlite"
 
 # 这些码代表"该词条的其他书写形式"，都当作别名收进来
 ALIAS_CODES = ("p", "d", "i", "3", "r", "t", "s", "0")
