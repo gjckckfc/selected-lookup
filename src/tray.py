@@ -48,7 +48,10 @@ ID_NOTEBOOK_OPEN = 1005
 CALLBACK_MESSAGE = WM_APP + 1
 ICON_SIZE = 32
 
-# 状态灯, 按红绿灯的语义: 绿=正常运行, 黄=已关闭, 红=API 没接入
+# 状态灯只分"开"和"关"两大块:
+#   开   -> 绿（不管 API 有没有接）
+#   关   -> 黄（正常）/ 红（API 没接入）
+# 红黄是"关"这一档里的细分, 所以关掉之后才需要区分。
 STATE_COLORS = {
     "on": (46, 204, 113),
     "off": (241, 196, 15),
@@ -169,9 +172,11 @@ def create_icon(rgb, size=ICON_SIZE):
 class TrayIcon:
     """托盘图标。左键单击 / 双击切换开关, 右键出菜单。
 
-    状态灯三色: 绿=正常运行, 黄=已关闭, 红=API 没接入。
-    红灯的优先级最高: 翻译开着却查不到密钥/模型, 就一直是红的,
-    提醒用户去设置里把密钥补上; 填好之后自己就变回绿色。
+    状态灯只表达两件大事: 开着还是关着。
+      绿 = 开启（API 接没接都算开启, 一律绿灯）
+      黄 = 关闭, 且 API 已接入
+      红 = 关闭, 且 API 没接入（提醒去设置里补密钥）
+    所以"开关"永远优先于"API 状态"; 那盏红/黄灯只在关掉时才出来说话。
     """
 
     def __init__(self, enabled=True, api_ready=True, on_toggle=None, on_quit=None,
@@ -201,14 +206,15 @@ class TrayIcon:
 
     @property
     def state(self):
-        """当前该显示哪盏灯。红灯优先级最高。"""
-        if not self.api_ready:
-            return "noapi"
-        return "on" if self.enabled else "off"
+        """当前该显示哪盏灯。先看开没开, 关着的时候才细分黄/红。"""
+        if self.enabled:
+            return "on"
+        return "off" if self.api_ready else "noapi"
 
     def _tip_text(self):
         if self.state == "noapi":
-            return "%s · API 未接入（去设置里填密钥）（左键切换，右键菜单）" % self.tip
+            return ("%s · 已关闭 · API 未接入（去设置里填密钥）"
+                    "（左键切换，右键菜单）" % self.tip)
         return "%s · %s（左键切换，右键菜单）" % (self.tip, STATE_LABELS[self.state])
 
     def _wnd_proc(self, hwnd, msg, w_param, l_param):
@@ -296,12 +302,12 @@ class TrayIcon:
         return bool(ok)
 
     def set_enabled(self, enabled):
-        """更新开关状态。API 没接入时仍然是红灯。"""
+        """更新开关状态。开着就是绿灯, 关掉才分黄/红。"""
         self.enabled = bool(enabled)
         self._refresh()
 
     def set_api_ready(self, ready):
-        """翻译用的 API 有没有接上。没接上就亮红灯, 提醒去填密钥。"""
+        """翻译用的 API 有没有接上。只在"关闭"状态下影响灯色（黄/红）。"""
         ready = bool(ready)
         if ready == self.api_ready:
             return
