@@ -111,14 +111,20 @@ def _run_vbs(script, report):
                 pass
 
 
-def create_shortcuts(target, arguments, workdir, icon, report):
-    """桌面 + 开始菜单各建一个。放哪儿交给 Windows 自己说。"""
+def create_shortcuts(target, arguments, workdir, icon, report, desktop=True):
+    """桌面 + 开始菜单各建一个。放哪儿交给 Windows 自己说。
+
+    desktop=False 就只建开始菜单的 —— 有人嫌桌面图标占地方（开始菜单那个留着，
+    万一后台被杀了还能从这儿重新打开）。
+    """
+    folders = ['shell.SpecialFolders("Desktop")', 'shell.SpecialFolders("Programs")']
+    if not desktop:
+        folders = folders[1:]
     script = "\n".join([
         'Set shell = CreateObject("WScript.Shell")',
         'Set fso = CreateObject("Scripting.FileSystemObject")',
         'Set out = fso.CreateTextFile(%s, True, True)' % _vbs(report),
-        'For Each folder In Array(shell.SpecialFolders("Desktop"), '
-        'shell.SpecialFolders("Programs"))',
+        'For Each folder In Array(%s)' % ", ".join(folders),
         '  path = folder & "\\%s.lnk"' % APP_NAME,
         '  Set lnk = shell.CreateShortcut(path)',
         '  lnk.TargetPath = %s' % _vbs(target),
@@ -198,11 +204,12 @@ def _autostart_command(exe, arguments):
     return command
 
 
-def install(autostart=True, copy_self=None, log=None):
+def install(autostart=True, copy_self=None, log=None, desktop=True):
     """建快捷方式 + 开机自启。返回给人看的说明（每行一条）。
 
     copy_self: 要不要把自己复制到固定安装位置。
                默认规则——打包版复制（用户可能把下载的文件夹删了），源码版不复制。
+    desktop:   要不要建桌面快捷方式（开始菜单那个总是会建）。
     """
     log = log or (lambda message: None)
     root = program_root()
@@ -232,7 +239,8 @@ def install(autostart=True, copy_self=None, log=None):
         notes.append("程序就在 %s（源码版，不复制）" % root)
 
     report = _report_path("install")
-    for line in create_shortcuts(exe, arguments, workdir, "%s,0" % icon, report):
+    for line in create_shortcuts(exe, arguments, workdir, "%s,0" % icon, report,
+                                 desktop=desktop):
         flag, _, path = line.partition(" ")
         notes.append("%s %s" % ("快捷方式:" if flag == "OK" else "快捷方式失败:", path))
         log("安装: 快捷方式 %s %s" % (flag, path))
