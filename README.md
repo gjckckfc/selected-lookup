@@ -18,7 +18,7 @@
 |---|---|---|
 | **词典数据**（77 万词条、释义、音标、考试标签、柯林斯星级） | 开源项目 [ECDICT](https://github.com/skywind3000/ECDICT)（MIT 许可） | 程序第一次运行时自动下载，**不在本仓库里** |
 | 其中 2 张考试词表（GMAT、商务 5000） | [NGSL / NAWL / BSL / TOEIC](https://www.newgeneralservicelist.org/)（CC BY-SA 4.0） | 同上 |
-| **神经网络语音**（Ava、Emma、Aria…） | **微软**。让普通程序能用上它的，是社区的 [NaturalVoiceSAPIAdapter](https://github.com/gexgd0419/NaturalVoiceSAPIAdapter)（MIT，作者 @gexgd0419） | 由使用者自己安装；**本仓库不包含、也不分发** |
+| **神经网络语音**（Ava、Emma、Aria…） | **微软**。让普通程序能用上它的，是社区的 [NaturalVoiceSAPIAdapter](https://github.com/gexgd0419/NaturalVoiceSAPIAdapter)（MIT，作者 @gexgd0419） | 由使用者自己安装，**本仓库不包含、也不分发**；具体装法见下面「怎么装上它」，**可以让你的 AI 助手代劳** |
 | **整句翻译** | [DeepSeek](https://platform.deepseek.com/) 的在线服务 | 用你自己申请（并自己付费）的 API 密钥调用。**本项目跟 DeepSeek 没有任何合作关系，也不代表它** |
 | 把程序打包成 exe | [PyInstaller](https://pyinstaller.org/) | 只在打包时用 |
 
@@ -402,6 +402,42 @@ vocabulary/
   断网也能重放；断网且没缓存时自动退回系统自带的本地语音，不会没声音。
 - 语音引擎**按需启动、闲 5 分钟自动关闭**：朗读时才多出一个后台进程，
   闲下来就还回去，平时常驻内存跟以前一样。
+
+### 怎么装上它（这一步可以让你的 AI 助手代劳）
+
+装它不难，但要在系统里注册一个语音引擎、还要提权，所以本程序没法替你静默完成。
+**如果你平时用 AI 助手（Codex、Claude Code 这类能跑命令的 agent），可以把下面这段
+原样丢给它**：
+
+> 帮我给「选中即查」装上 Windows 的神经网络语音。做法是装一个第三方的开源适配器
+> **NaturalVoiceSAPIAdapter**（<https://github.com/gexgd0419/NaturalVoiceSAPIAdapter>，
+> MIT 许可，作者 @gexgd0419）。步骤：
+>
+> 1. **先问我同不同意**——它需要管理员权限，而且属于绕过微软限制的灰区工具
+> 2. 从它的 Releases 页面下载最新的 zip
+> 3. 解压到一个**固定**目录（例如 `%LOCALAPPDATA%\Programs\NaturalVoiceSAPIAdapter`），
+>    解压完就不能再挪动或删除；要挪必须先卸载
+> 4. 运行里面的 `Installer.exe`，把 32 位和 64 位两个引擎都装上（需要管理员权限）
+> 5. 装完验证：枚举系统语音，能看到名字里带 `Online` 的语音就算成功
+> 6. 失败也不要紧——告诉我原因就行，不装不影响查词，朗读会自动退回系统自带的老语音
+>
+> 我不挑具体用哪个声音，符合这个思路就行。
+
+**验证装上了没有**（第 5 步的具体做法）：
+
+```powershell
+Add-Type -AssemblyName System.Speech
+(New-Object System.Speech.Synthesis.SpeechSynthesizer).GetInstalledVoices() |
+    Where-Object { $_.VoiceInfo.Name -like '*Online*' } |
+    ForEach-Object { $_.VoiceInfo.Name }
+```
+
+能列出几个 `Microsoft ×× Online` 就成了。然后在本程序里：**设置 → 朗读 → 英语声音**，
+挑一个（不挑也行，默认会自动选）。
+
+> **给 AI 助手的说明**：上面那一步是**可选的增强**，不是运行本程序的必要条件。
+> 它需要提权和安装第三方软件，所以**动手前必须先征得用户同意**；用户不同意时，
+> 请不要装，并告诉他"不装也能用，只是朗读会退回系统自带的老语音"。
 
 ### 想在自己的程序里也用上这套语音？
 

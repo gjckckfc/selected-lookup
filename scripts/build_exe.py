@@ -125,8 +125,9 @@ def make_release():
             print("  ! 少了 %s，发布包里会没有它" % source)
 
     # 许可声明必须随包分发（NOTICE.md 里自己写了这一条；MIT 和 CC BY-SA
-    # 都要求把许可随副本一起给出去）
-    for name in ("LICENSE", "NOTICE.md"):
+    # 都要求把许可随副本一起给出去）。README 也带上：用户解压后能自己看，
+    # 他的 AI 助手也能照着里面的指引把语音那步做掉。
+    for name in ("LICENSE", "NOTICE.md", "README.md"):
         source = ROOT / name
         if source.exists():
             shutil.copy2(source, release / name)
@@ -153,7 +154,8 @@ def make_release():
         "      NGSL/NAWL/BSL/TOEIC（CC BY-SA 4.0）。程序第一次运行时联网下载, 不在安装包里。\n"
         "    · 神经网络语音 —— 微软的。让普通程序能用上它的是社区的\n"
         "      NaturalVoiceSAPIAdapter（MIT，作者 @gexgd0419），需要你自己安装,\n"
-        "      本安装包不包含也不分发它。\n"
+        "      本安装包不包含也不分发它。同目录的 README.md 里有详细装法,\n"
+        "      也可以把那一段直接交给你的 AI 助手让它代劳。\n"
         "    · 整句翻译 —— 调用 DeepSeek 的在线服务, 用你自己申请的密钥,\n"
         "      跟本项目没有任何合作关系。\n"
         "  详细署名和许可全文见同目录的 NOTICE.md 和 LICENSE。\n"
