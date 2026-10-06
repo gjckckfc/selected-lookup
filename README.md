@@ -371,6 +371,59 @@ vocabulary/
 - 语音引擎**按需启动、闲 5 分钟自动关闭**：朗读时才多出一个后台进程，
   闲下来就还回去，平时常驻内存跟以前一样。
 
+### 想在自己的程序里也用上这套语音？
+
+**这套做法可以整个搬走**，而且不花一分钱——比买云 TTS 便宜，比系统自带的好听得多。
+思路一句话：**Windows 里的神经网络语音本来只给讲述人用，但有个开源适配器把它们
+暴露成标准 SAPI5 语音，于是任何会调 SAPI 的程序都能挑到它们。**
+
+三步：
+
+**1. 让用户装一次适配器**（需要管理员权限——它要往系统注册一个语音引擎）
+
+**2. 枚举语音，按名字挑**
+
+```powershell
+Add-Type -AssemblyName System.Speech
+(New-Object System.Speech.Synthesis.SpeechSynthesizer).GetInstalledVoices() |
+    ForEach-Object { $_.VoiceInfo.Name + ' | ' + $_.VoiceInfo.Culture.Name }
+```
+
+名字里带 `Online` 的就是神经网络语音（`Microsoft Ava Online`、`Microsoft Xiaoxiao Online`…）；
+带 `Desktop` 的是十几年前的老引擎（Zira、David），念稿感很重。
+
+**3. 合成成 wav，再自己播**
+
+```powershell
+$s = New-Object System.Speech.Synthesis.SpeechSynthesizer
+$s.SelectVoice('Microsoft Ava Online')
+$s.SetOutputToWaveFile('out.wav')
+$s.Speak('hello')
+```
+
+.NET 里用的是同一套 API（`System.Speech.Synthesis.SpeechSynthesizer`），
+PowerShell 只是个免安装的载体。
+
+**几条实战经验（都是我们踩出来的）**
+
+- **按内容哈希缓存 wav**。在线合成一次要 0.3–1.9 秒，缓存命中就是零延迟；同一个词念
+  第二遍连合成进程都不用起。
+- **合成进程按需起、闲置回收**。常驻一个 PowerShell 大约 75 MB，闲着就还回去。
+- **必须做本地兜底**。断网时 `* Online` 会失败，`System.Speech` 里的本地语音还能用，
+  别让程序静默没声音。
+- **系统默认语音是中文的**，直接念英文是一股中文腔——一定要显式按 `en-*` 挑。
+- **别用 `winsound` 去打断正在播的声音**。它的 `SND_PURGE` 在现代 Windows 上不生效，
+  表现是"点了新词，旧的那句还在念"。换 MCI（`mciSendStringW`）才有确定的控制权。
+- **MCI 的播放设备属于"打开它的那个线程"**，跨线程 `stop` 停不掉。所有播放调用要固定
+  在同一个线程里发出去。
+
+**代价要如实告诉用户**：适配器靠从系统文件里取密钥来解锁这批语音，属于**绕过微软限制**
+的灰区做法——微软并没有允许第三方程序使用讲述人和 Edge 的语音，系统大更新后可能失效
+（重装一次即可）。这批语音也是**联网**合成的，文字会发到微软服务器。
+
+安装需要管理员权限、装完还不能挪动，**所以它只能由用户自己装，不适合被程序静默打包进去**。
+这也是本仓库不包含它的原因。
+
 ### 点下去就有声音
 
 神经网络语音要联网合成，所以头一次念**一个新词**要等 0.3–1.7 秒。为了不让这个等待
