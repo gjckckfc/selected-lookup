@@ -124,6 +124,15 @@ def make_release():
         else:
             print("  ! 少了 %s，发布包里会没有它" % source)
 
+    # 许可声明必须随包分发（NOTICE.md 里自己写了这一条；MIT 和 CC BY-SA
+    # 都要求把许可随副本一起给出去）
+    for name in ("LICENSE", "NOTICE.md"):
+        source = ROOT / name
+        if source.exists():
+            shutil.copy2(source, release / name)
+        else:
+            print("  ! 少了 %s，发布包里会没有它" % source)
+
     readme = release / "说明.txt"
     readme.write_text(
         "%s %s\n%s\n\n"
