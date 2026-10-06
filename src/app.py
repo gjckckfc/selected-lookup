@@ -95,6 +95,7 @@ class App:
             drag_threshold=self.settings.get("drag_threshold"),
             hotkeys=HOTKEYS,
             logger=self.log,
+            on_fault=lambda reason: self.commands.put(("fault", reason)),
         )
         self.watcher.paused = not self.enabled
 
@@ -330,6 +331,10 @@ class App:
         try:
             while True:
                 command = self.commands.get_nowait()
+                if isinstance(command, tuple) and command[0] == "fault":
+                    # 钩子那边坏了: 托盘亮红灯（见 tray.STATE_COLORS）
+                    self.tray.set_fault(command[1])
+                    continue
                 if command == "quit":
                     self.quit()
                     return
