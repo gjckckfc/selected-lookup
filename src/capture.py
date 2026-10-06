@@ -190,11 +190,10 @@ class SelectionWatcher:
     """
 
     def __init__(self, on_selection, on_dismiss=None, on_hotkey=None,
-                 drag_threshold=6, hotkeys=(), logger=None, on_fault=None):
+                 drag_threshold=6, hotkeys=(), logger=None):
         self.on_selection = on_selection
         self.on_dismiss = on_dismiss
         self.on_hotkey = on_hotkey
-        self.on_fault = on_fault
         self.drag_threshold = drag_threshold
         self.hotkeys = list(hotkeys)
         self.log = logger or (lambda msg: None)
@@ -305,15 +304,6 @@ class SelectionWatcher:
 
     # ----- 生命周期 -----
 
-    def _report_fault(self, reason):
-        """钩子这一层坏了就上报, 让托盘亮红灯。"""
-        if not self.on_fault:
-            return
-        try:
-            self.on_fault(reason)
-        except Exception as exc:
-            self.log("fault callback error: %s" % exc)
-
     def start(self):
         self._thread = threading.Thread(target=self._run, name="hook", daemon=True)
         self._thread.start()
@@ -325,18 +315,13 @@ class SelectionWatcher:
         if not self._hook:
             code = ctypes.get_last_error()
             self.log("SetWindowsHookExW 失败，错误码 %d" % code)
-            self._report_fault("鼠标钩子挂载失败（错误码 %d）" % code)
             return
         self._kb_hook = user32.SetWindowsHookExW(WH_KEYBOARD_LL, self._kb_proc_ref, None, 0)
         self.log("鼠标钩子已挂载，键盘钩子%s" % ("已挂载" if self._kb_hook else "挂载失败"))
-        if not self._kb_hook:
-            self._report_fault("键盘钩子挂载失败（Esc 收起和热键会失效）")
 
         for index, (_mods, _vk, name) in enumerate(self.hotkeys, start=1):
             mods, vk, _ = self.hotkeys[index - 1]
             if not user32.RegisterHotKey(None, 100 + index, mods, vk):
-                # 热键冲突很常见（别的程序占了同样的组合）, 取词本身还能用,
-                # 所以这里只记日志, 不亮故障灯。
                 self.log("热键注册失败: %s" % name)
 
         msg = wintypes.MSG()

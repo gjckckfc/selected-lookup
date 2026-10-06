@@ -95,12 +95,12 @@ class App:
             drag_threshold=self.settings.get("drag_threshold"),
             hotkeys=HOTKEYS,
             logger=self.log,
-            on_fault=lambda reason: self.commands.put(("fault", reason)),
         )
         self.watcher.paused = not self.enabled
 
         self.tray = TrayIcon(
             enabled=self.enabled,
+            api_ready=self._translate_ready(),
             notebook_enabled=self.notebook.enabled,
             on_toggle=lambda: self.commands.put("toggle"),
             on_notebook_toggle=lambda: self.commands.put("notebook_toggle"),
@@ -198,6 +198,7 @@ class App:
 
     def _test_translate(self):
         self._reload_translator()
+        self.tray.set_api_ready(self._translate_ready())
         return self.translator.test()
 
     def _translate_ready(self):
@@ -288,6 +289,8 @@ class App:
             self.popup.apply_settings(hide_after=value)
         elif key in ("translate_enabled", "api_key", "model"):
             self._reload_translator()
+            # 密钥填好/清空都立刻反映到托盘红灯上
+            self.tray.set_api_ready(self._translate_ready())
         self.log("设置 %s = %s" % (key, value))
 
     def _toggle_notebook(self):
@@ -319,6 +322,7 @@ class App:
         if want != self.enabled:
             self._toggle()
         self._reload_translator()
+        self.tray.set_api_ready(self._translate_ready())
         self.log("已恢复默认设置")
 
     def _open_settings(self):
@@ -331,10 +335,6 @@ class App:
         try:
             while True:
                 command = self.commands.get_nowait()
-                if isinstance(command, tuple) and command[0] == "fault":
-                    # 钩子那边坏了: 托盘亮红灯（见 tray.STATE_COLORS）
-                    self.tray.set_fault(command[1])
-                    continue
                 if command == "quit":
                     self.quit()
                     return

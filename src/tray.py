@@ -48,16 +48,16 @@ ID_NOTEBOOK_OPEN = 1005
 CALLBACK_MESSAGE = WM_APP + 1
 ICON_SIZE = 32
 
-# 状态灯, 按红绿灯的语义: 绿=正常运行, 黄=已关闭, 红=故障
+# 状态灯, 按红绿灯的语义: 绿=正常运行, 黄=已关闭, 红=API 没接入
 STATE_COLORS = {
     "on": (46, 204, 113),
     "off": (241, 196, 15),
-    "fault": (231, 76, 60),
+    "noapi": (231, 76, 60),
 }
 STATE_LABELS = {
     "on": "已开启",
     "off": "已关闭",
-    "fault": "故障",
+    "noapi": "API 未接入",
 }
 
 WNDPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT,
@@ -169,16 +169,17 @@ def create_icon(rgb, size=ICON_SIZE):
 class TrayIcon:
     """托盘图标。左键单击 / 双击切换开关, 右键出菜单。
 
-    状态灯三色: 绿=正常运行, 黄=已关闭, 红=故障。
-    "故障"是粘性状态——只要 core 功能坏了就一直是红的, 直到重启;
-    切换开关不会把它变回绿色(那会让用户以为已经好了)。
+    状态灯三色: 绿=正常运行, 黄=已关闭, 红=API 没接入。
+    红灯的优先级最高: 翻译开着却查不到密钥/模型, 就一直是红的,
+    提醒用户去设置里把密钥补上; 填好之后自己就变回绿色。
     """
 
-    def __init__(self, enabled=True, on_toggle=None, on_quit=None,
+    def __init__(self, enabled=True, api_ready=True, on_toggle=None, on_quit=None,
                  on_settings=None, notebook_enabled=True,
                  on_notebook_toggle=None, on_notebook_open=None,
                  tip="选中即查", logger=None):
         self.enabled = enabled
+        self.api_ready = bool(api_ready)
         self.notebook_enabled = bool(notebook_enabled)
         self.on_toggle = on_toggle
         self.on_quit = on_quit
@@ -187,7 +188,6 @@ class TrayIcon:
         self.on_notebook_open = on_notebook_open
         self.tip = tip
         self.log = logger or (lambda message: None)
-        self.fault_reason = ""
 
         self._icons = {name: create_icon(rgb) for name, rgb in STATE_COLORS.items()}
         self._hwnd = None
@@ -201,15 +201,14 @@ class TrayIcon:
 
     @property
     def state(self):
-        """当前该显示哪盏灯。故障优先级最高。"""
-        if self.fault_reason:
-            return "fault"
+        """当前该显示哪盏灯。红灯优先级最高。"""
+        if not self.api_ready:
+            return "noapi"
         return "on" if self.enabled else "off"
 
     def _tip_text(self):
-        if self.state == "fault":
-            detail = self.fault_reason or "未知原因"
-            return "%s · 故障：%s（左键切换，右键菜单）" % (self.tip, detail)
+        if self.state == "noapi":
+            return "%s · API 未接入（去设置里填密钥）（左键切换，右键菜单）" % self.tip
         return "%s · %s（左键切换，右键菜单）" % (self.tip, STATE_LABELS[self.state])
 
     def _wnd_proc(self, hwnd, msg, w_param, l_param):
@@ -297,24 +296,17 @@ class TrayIcon:
         return bool(ok)
 
     def set_enabled(self, enabled):
-        """更新开关状态。若正处于故障状态, 灯仍然是红的。"""
+        """更新开关状态。API 没接入时仍然是红灯。"""
         self.enabled = bool(enabled)
         self._refresh()
 
-    def set_fault(self, reason):
-        """亮红灯。reason 会写进提示文字, 让用户知道坏在哪。"""
-        reason = (reason or "").strip() or "未知原因"
-        if self.fault_reason == reason:
+    def set_api_ready(self, ready):
+        """翻译用的 API 有没有接上。没接上就亮红灯, 提醒去填密钥。"""
+        ready = bool(ready)
+        if ready == self.api_ready:
             return
-        self.fault_reason = reason
-        self.log("托盘状态: 故障红灯（%s）" % reason)
-        self._refresh()
-
-    def clear_fault(self):
-        """故障排除后手动恢复。目前没有自动清除的路径, 留给以后用。"""
-        if not self.fault_reason:
-            return
-        self.fault_reason = ""
+        self.api_ready = ready
+        self.log("托盘状态: %s" % ("API 已接入" if ready else "API 未接入（红灯）"))
         self._refresh()
 
     def set_notebook_enabled(self, enabled):
