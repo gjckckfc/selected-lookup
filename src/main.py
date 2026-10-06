@@ -60,7 +60,7 @@ def _run_installer(args):
     paths.ensure(paths.data_root())
     try:
         if args.install:
-            notes = shortcuts.install(autostart=True,
+            notes = shortcuts.install(autostart=not args.no_autostart,
                                       desktop=not args.no_desktop,
                                       log=lambda m: _log_line(args.log, m))
             title = "%s %s · 安装完成" % (appinfo.APP_NAME, appinfo.VERSION)
@@ -98,6 +98,8 @@ def main(argv=None):
                         help="建快捷方式和开机自启（安装）")
     parser.add_argument("--no-desktop", action="store_true",
                         help="配合 --install：不建桌面快捷方式（开始菜单那个照建）")
+    parser.add_argument("--no-autostart", action="store_true",
+                        help="配合 --install：不设开机自启")
     parser.add_argument("--uninstall", action="store_true",
                         help="撤销快捷方式和开机自启（不动用户数据）")
     parser.add_argument("--version", action="version",

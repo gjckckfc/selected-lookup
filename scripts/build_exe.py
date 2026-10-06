@@ -146,6 +146,17 @@ def make_release():
         "  **你的生词本和设置都会留着**。\n\n"
         "你的数据在（想备份就复制这个文件夹）:\n"
         "  %%APPDATA%%\\%s\n"
+        "\n"
+        "关于第三方:\n"
+        "  本程序只写了把各种能力串起来的那层逻辑, 里面用到的这些东西都不是本项目做的:\n"
+        "    · 词典数据 —— 开源项目 ECDICT（MIT），另有 2 张词表来自\n"
+        "      NGSL/NAWL/BSL/TOEIC（CC BY-SA 4.0）。程序第一次运行时联网下载, 不在安装包里。\n"
+        "    · 神经网络语音 —— 微软的。让普通程序能用上它的是社区的\n"
+        "      NaturalVoiceSAPIAdapter（MIT，作者 @gexgd0419），需要你自己安装,\n"
+        "      本安装包不包含也不分发它。\n"
+        "    · 整句翻译 —— 调用 DeepSeek 的在线服务, 用你自己申请的密钥,\n"
+        "      跟本项目没有任何合作关系。\n"
+        "  详细署名和许可全文见同目录的 NOTICE.md 和 LICENSE。\n"
         % (APP_NAME, VERSION, appinfo.TAGLINE, APP_NAME, APP_NAME),
         encoding="utf-8")
 
