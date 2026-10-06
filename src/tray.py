@@ -62,6 +62,8 @@ STATE_LABELS = {
     "off": "已关闭",
     "noapi": "API 未接入",
 }
+# 悬停提示里的操作说明
+HINT = "（左键切换，双击设置，右键菜单）"
 
 WNDPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT,
                              wintypes.WPARAM, wintypes.LPARAM)
@@ -117,6 +119,7 @@ user32.TrackPopupMenu.restype = ctypes.c_int
 user32.TrackPopupMenu.argtypes = [wintypes.HMENU, wintypes.UINT, ctypes.c_int, ctypes.c_int,
                                   ctypes.c_int, wintypes.HWND, ctypes.c_void_p]
 user32.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
+user32.GetDoubleClickTime.restype = wintypes.UINT
 user32.RegisterClassW.restype = wintypes.ATOM
 user32.RegisterClassW.argtypes = [ctypes.POINTER(WNDCLASSW)]
 user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
@@ -170,13 +173,17 @@ def create_icon(rgb, size=ICON_SIZE):
 
 
 class TrayIcon:
-    """托盘图标。左键单击 / 双击切换开关, 右键出菜单。
+    """托盘图标。左键单击切换开关, 双击打开设置, 右键出菜单。
 
     状态灯只表达两件大事: 开着还是关着。
       绿 = 开启（API 接没接都算开启, 一律绿灯）
       黄 = 关闭, 且 API 已接入
       红 = 关闭, 且 API 没接入（提醒去设置里补密钥）
     所以"开关"永远优先于"API 状态"; 那盏红/黄灯只在关掉时才出来说话。
+
+    单击和双击要分开处理: Windows 收到双击时, 会先发一次单击再发双击,
+    所以单击不能立刻执行, 得压到"双击间隔"之后再算数——否则双击会先切一次
+    开关、再打开设置, 用户看到的就是"点一下开关自己变了"。
     """
 
     def __init__(self, enabled=True, api_ready=True, on_toggle=None, on_quit=None,
@@ -201,6 +208,12 @@ class TrayIcon:
         self._ready = threading.Event()
         self._thread = None
         self._nid = None
+        self._pending_click = None       # 等待中的单击（还没确定是不是双击）
+        self._skip_next_up = False       # 双击之后紧跟的那个抬起要丢掉
+        try:
+            self.double_click_interval = user32.GetDoubleClickTime() / 1000.0
+        except Exception:
+            self.double_click_interval = 0.5
 
     # ------------------------------------------------------------------
 
@@ -213,14 +226,15 @@ class TrayIcon:
 
     def _tip_text(self):
         if self.state == "noapi":
-            return ("%s · 已关闭 · API 未接入（去设置里填密钥）"
-                    "（左键切换，右键菜单）" % self.tip)
-        return "%s · %s（左键切换，右键菜单）" % (self.tip, STATE_LABELS[self.state])
+            return "%s · 已关闭 · API 未接入（去设置里填密钥）%s" % (self.tip, HINT)
+        return "%s · %s%s" % (self.tip, STATE_LABELS[self.state], HINT)
 
     def _wnd_proc(self, hwnd, msg, w_param, l_param):
         if msg == CALLBACK_MESSAGE:
-            if l_param in (WM_LBUTTONUP, WM_LBUTTONDBLCLK):
-                self._fire_toggle()
+            if l_param == WM_LBUTTONUP:
+                self._on_lbutton_up()
+            elif l_param == WM_LBUTTONDBLCLK:
+                self._on_lbutton_dblclk()
             elif l_param == WM_RBUTTONUP:
                 self._show_menu()
             return 0
@@ -228,6 +242,42 @@ class TrayIcon:
             user32.PostQuitMessage(0)
             return 0
         return user32.DefWindowProcW(hwnd, msg, w_param, l_param)
+
+    # ----- 单击 / 双击 -----
+
+    def _on_lbutton_up(self):
+        if self._skip_next_up:
+            # 这是双击里跟出来的那一次抬起, 丢掉
+            self._skip_next_up = False
+            return
+        if self._pending_click is not None:
+            # 双击间隔内又点了一次: 当双击算
+            self._cancel_pending_click()
+            self._open_settings()
+            return
+        timer = threading.Timer(self.double_click_interval, self._fire_pending_click)
+        timer.daemon = True
+        self._pending_click = timer
+        timer.start()
+
+    def _on_lbutton_dblclk(self):
+        self._skip_next_up = True
+        self._cancel_pending_click()
+        self._open_settings()
+
+    def _cancel_pending_click(self):
+        timer = self._pending_click
+        self._pending_click = None
+        if timer is not None:
+            timer.cancel()
+
+    def _fire_pending_click(self):
+        """等到双击间隔过完还没等到第二次点击, 那就确实是单击。"""
+        self._pending_click = None
+        self._fire_toggle()
+
+    def _open_settings(self):
+        self._fire("on_settings", "tray settings error")
 
     def _fire_toggle(self):
         if self.on_toggle:
@@ -354,6 +404,7 @@ class TrayIcon:
         return self
 
     def stop(self):
+        self._cancel_pending_click()
         if self._nid:
             try:
                 shell32.Shell_NotifyIconW(NIM_DELETE, ctypes.byref(self._nid))
