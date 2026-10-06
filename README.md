@@ -33,6 +33,12 @@ n. 胀大, 夸张, 通货膨胀
 
 需要 Python 3.10+（当前环境是 3.14.3）。**不需要安装任何第三方库。**
 
+**词典不用手动准备**：第一次运行的时候程序会自己弹一个窗口，把 52 MB 的词典数据
+下下来、校验、建好词形索引，过程中显示进度、速度、还剩多久；失败了能重试。
+装完就不再联网查词了。整个过程不用碰命令行。
+
+如果你想手动来（离线环境、或者想提前备好），也可以：
+
 ```powershell
 # 1. 下载并校验词典 (约 52 MB, 解包后 126 MB)
 python scripts/fetch_dict.py
@@ -40,6 +46,8 @@ python scripts/fetch_dict.py
 # 2. 构建词形还原索引 (约 1 秒, 生成 4 MB)
 python scripts/build_index.py
 ```
+
+两条路用的是**同一份实现**（`src/dictpack.py`），不会出现"脚本下好的程序不认"。
 
 词典和索引会下到**用户数据目录**里：
 
@@ -455,6 +463,8 @@ src/app.py           组装与线程调度
 src/main.py          入口
 src/paths.py         用户数据都放在 %APPDATA%\选中即查 下的路径规则
 src/single_instance.py  单实例锁(重复启动不会开出第二个)
+src/dictpack.py      词典的下载/校验/解包/建索引(脚本和向导共用一套)
+src/setup_wizard.py  第一次运行时的准备向导(带进度的下载窗口)
 scripts/fetch_dict.py    下载并校验词典
 scripts/build_index.py   构建词形索引
 scripts/preview_popup.py 调试用: 单独预览浮窗外观

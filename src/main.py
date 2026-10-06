@@ -26,7 +26,9 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
 from app import App  # noqa: E402
+import dictpack  # noqa: E402
 import paths  # noqa: E402
+from setup_wizard import SetupWizard  # noqa: E402
 import single_instance  # noqa: E402
 from tray import CALLBACK_MESSAGE, SHOW_SETTINGS_MESSAGE, WINDOW_CLASS  # noqa: E402
 
@@ -72,11 +74,27 @@ def main(argv=None):
     paths.ensure(data_dir)
     paths.migrate(ROOT, data_dir, log=lambda m: _log_line(args.log, m))
 
-    index = args.index
-    if not Path(index).exists():
-        print("提示: 没找到词形索引 %s, 将只能精确匹配。" % index)
-        print("      运行 python scripts/build_index.py 可以生成。")
-        index = None
+    # 词典不在 → 这是第一次运行, 用图形向导把它准备好（下载 + 校验 + 建索引）
+    if not Path(args.db).exists():
+        wizard = SetupWizard(ROOT, logger=lambda m: _log_line(args.log, m))
+        ok, message = wizard.run()
+        if not ok or not wizard.db_path:
+            _log_line(args.log, "首次准备没有完成（%s），退出" % message)
+            return 1
+        args.db = wizard.db_path
+        if wizard.index_path:
+            args.index = wizard.index_path
+    elif not Path(args.index).exists():
+        # 词典在、只是索引缺了（很少见）: 不弹窗了, 它只要一秒, 悄悄补上
+        try:
+            _log_line(args.log, "词形索引缺失，重新生成…")
+            args.index = str(dictpack.build_index(args.db)[0])
+        except Exception as exc:      # noqa: BLE001 - 补不上就降级, 不该拦住启动
+            _log_line(args.log, "重建词形索引失败: %s" % exc)
+
+    index = args.index if Path(args.index).exists() else None
+    if index is None:
+        _log_line(args.log, "没有词形索引，只能精确匹配")
 
     app = App(
         db_path=args.db,
