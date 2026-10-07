@@ -8,7 +8,8 @@
 
 布局:
   - 顶部标题区固定不动(词头或原文 + 复制全部按钮)
-  - 下面是内容区, 内容过多时限制最大高度并支持滚轮滚动
+  - 下面是内容区, 内容过多时限制最大高度, 滚轮滚动 + 右侧一条进度条
+    (和网页一样: 拖动滑块能直接跳到想看的地方)
   - 原文用小字号, 超过两行自动收起, 点「展开全文」看全部
   - 逐词释义按难度排序(生词优先), 排序方式在设置里改
 
@@ -46,6 +47,9 @@ BLOCK_HOVER = "#2b374b"
 BLOCK_COPIED = "#2c4a3c"
 BLOCK_SPEAK = "#33405f"
 
+SCROLLBAR_TRACK = "#2a3242"
+SCROLLBAR_THUMB = "#4a5a7a"
+
 BUTTON_BG = "#2c3648"
 BUTTON_FG = "#c9d6ea"
 BUTTON_ACTIVE = "#3b4a63"
@@ -65,6 +69,9 @@ DRAG_SLOP = 4            # 松开时位移小于这个值算"点击", 否则算"
 MAX_DEF_LINES = 3        # 每个单词块最多显示几行释义
 MAX_ORIGIN_LINES = 2     # 原文最多显示几行, 超出收起
 SCROLL_STEP = 26         # 滚轮一格滚多少像素
+SCROLLBAR_WIDTH = 5      # 右侧进度条宽度(px); 再宽就抢正文的地方了
+SCROLLBAR_GAP = 4        # 进度条和正文之间留的空隙(px)
+SCROLLBAR_MIN_THUMB = 24  # 滑块最短几像素, 太短了抓不住
 PREWARM_DELAY = 250      # 鼠标在块上停多久就在后台预生成语音(毫秒)
 
 user32 = ctypes.windll.user32
@@ -128,6 +135,8 @@ class Popup:
         self._speak_timer = None
         self._prewarm_timer = None
         self._prewarmed = set()
+        self._bar_drag = False
+        self._bar_grab = 0
 
         self._small_font = tkfont.Font(family=FONT_FAMILY, size=9)
 
@@ -144,12 +153,25 @@ class Popup:
         self.header_frame = tk.Frame(self.card, bg=CARD_BG)
         self.header_frame.pack(fill="x")
 
-        # 内容区: Canvas + 内嵌 Frame, 内容超出时才能滚动
+        # 内容区: 左边 Canvas(里面嵌 Frame), 右边一条自绘的进度条。
+        # 不用 tk.Scrollbar: 系统样式在深色卡片里是一块亮灰, 太跳。
+        self.body = tk.Frame(self.card, bg=CARD_BG)
+        self.body.pack(fill="x")
+        self.vbar = tk.Canvas(self.body, bg=CARD_BG, width=SCROLLBAR_WIDTH,
+                              height=1, highlightthickness=0, bd=0,
+                              cursor="arrow")
+        self.vbar.pack(side="right", fill="y", padx=(SCROLLBAR_GAP, 0))
+        self.vbar.bind("<Button-1>", self._scrollbar_press)
+        self.vbar.bind("<B1-Motion>", self._scrollbar_drag)
+        self.vbar.bind("<ButtonRelease-1>", self._scrollbar_release)
+
         inner_w = self.inner_width
-        self.canvas = tk.Canvas(self.card, bg=CARD_BG, highlightthickness=0,
+        self.canvas = tk.Canvas(self.body, bg=CARD_BG, highlightthickness=0,
                                 bd=0, width=inner_w, height=10,
                                 yscrollincrement=SCROLL_STEP)
-        self.canvas.pack(fill="x", pady=(0, 0))
+        self.canvas.pack(side="left", fill="x", expand=True)
+        # 窗口刚 deiconify 时还没映射, 尺寸是 1; 等它真正拿到高度后再画一次进度条
+        self.canvas.bind("<Configure>", lambda event: self._update_scrollbar())
         self.inner = tk.Frame(self.canvas, bg=CARD_BG)
         self.canvas_window = self.canvas.create_window((0, 0), window=self.inner,
                                                        anchor="nw", width=inner_w)
@@ -162,8 +184,9 @@ class Popup:
 
     @property
     def inner_width(self):
-        """内容区(Canvas)宽度。"""
-        return max(self.width - PADDING_X, 160)
+        """内容区(Canvas)宽度: 总宽去掉左右内边距, 再去掉右侧进度条占的地方。"""
+        chrome = PADDING_X + SCROLLBAR_GAP + SCROLLBAR_WIDTH
+        return max(self.width - chrome, 160)
 
     # ------------------------------------------------------------------
     # Windows 层面的外观
@@ -215,7 +238,81 @@ class Popup:
         if steps == 0:
             steps = -1 if event.delta > 0 else 1
         self.canvas.yview_scroll(steps, "units")
+        self._update_scrollbar()
         return "break"
+
+    # ---- 右侧进度条 ----
+
+    def _bar_height(self):
+        """进度条有多高。
+
+        窗口还没映射出来时 winfo_height() 是 1, 这时用 Canvas 的**请求**高度:
+        浮窗的尺寸就是按请求尺寸定死的, 两者一致。
+        """
+        height = self.vbar.winfo_height()
+        return height if height > 1 else self.canvas.winfo_reqheight()
+
+    def _thumb_pixels(self, height):
+        """滑块当前该占哪一段像素 (y0, y1); 没什么可滚的就返回 None。"""
+        if height <= 1 or not self._scrollable:
+            return None
+        first, last = self.canvas.yview()
+        span = last - first
+        if span <= 0 or span >= 1.0:
+            return None
+        size = min(max(int(round(span * height)), SCROLLBAR_MIN_THUMB), height)
+        y0 = max(0, min(int(first * height), height - size))
+        return y0, y0 + size
+
+    def _update_scrollbar(self):
+        """重画进度条: 内容装得下就什么都不画, 和网页一样。"""
+        bar = self.vbar
+        bar.delete("all")
+        height = self._bar_height()
+        pixels = self._thumb_pixels(height)
+        if not pixels:
+            return
+        bar.create_rectangle(0, 0, SCROLLBAR_WIDTH, height,
+                             fill=SCROLLBAR_TRACK, outline="")
+        y0, y1 = pixels
+        bar.create_rectangle(0, y0, SCROLLBAR_WIDTH, y1,
+                             fill=SCROLLBAR_THUMB, outline="")
+
+    def _scrollbar_press(self, event):
+        pixels = self._thumb_pixels(self._bar_height())
+        if not pixels:
+            return "break"
+        y0, y1 = pixels
+        if y0 <= event.y < y1:
+            self._bar_grab = event.y - y0          # 抓在滑块本身
+        else:
+            # 点的是空白: 把滑块挪过来(中心对齐点击处), 然后接着拖
+            self._bar_grab = (y1 - y0) // 2
+            self._scroll_to_pixel(event.y - self._bar_grab)
+        self._bar_drag = True
+        return "break"
+
+    def _scrollbar_drag(self, event):
+        if self._bar_drag:
+            self._scroll_to_pixel(event.y - self._bar_grab)
+        return "break"
+
+    def _scrollbar_release(self, event):
+        self._bar_drag = False
+        return "break"
+
+    def _scroll_to_pixel(self, y0):
+        """把滑块顶端放到 y0 像素处, 换算成 Canvas 的滚动比例。"""
+        height = self._bar_height()
+        pixels = self._thumb_pixels(height)
+        if not pixels:
+            return
+        travel = height - (pixels[1] - pixels[0])
+        fraction = 0.0 if travel <= 0 else max(0.0, min(1.0, y0 / float(travel)))
+        first, last = self.canvas.yview()
+        span = max(0.0, min(1.0, last - first))
+        self.canvas.yview_moveto(fraction * (1.0 - span))
+        self._update_scrollbar()
 
     def _sync_scroll_hint(self):
         if not hasattr(self, "_subtitle_label") or self._subtitle_label is None:
@@ -596,6 +693,7 @@ class Popup:
             self.canvas.yview_moveto(0)
         self._on_inner_configure()
         self._sync_scroll_hint()
+        self._update_scrollbar()
 
     def _resize_in_place(self):
         """标题区或内容变了以后, 就地重新算一次窗口大小。"""
