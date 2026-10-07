@@ -19,6 +19,8 @@ import time
 import urllib.error
 import urllib.request
 
+import appinfo
+
 TARGET_LANGUAGE = "简体中文"
 
 # 目前只接 DeepSeek: 便宜, 而且翻译是个很基础的功能, 不值得为它引入更贵的服务。
@@ -148,7 +150,7 @@ class Translator:
             headers={
                 "Content-Type": "application/json",
                 "Authorization": "Bearer %s" % self.api_key,
-                "User-Agent": "lookup-plugin/1.0",
+                "User-Agent": "lookup-plugin/%s" % appinfo.VERSION,
             })
         with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT) as response:
             return json.loads(response.read().decode("utf-8"))

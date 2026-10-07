@@ -662,12 +662,12 @@ python scripts/build_exe.py
 
 ```
 dist\选中即查\              程序本体（PyInstaller 的产物）
-dist\选中即查-1.0\          发布包：程序 + 安装.bat + 卸载.bat + 说明.txt
-dist\选中即查-1.0.zip       直接当 GitHub Release 的附件发出去
+dist\选中即查-1.5\          发布包：程序 + 安装.bat + 卸载.bat + 说明.txt
+dist\选中即查-1.5.zip       直接当 GitHub Release 的附件发出去
 ```
 
 发到 GitHub Release 时附件名要用**英文**——GitHub 会把附件名里的中文直接吃掉，
-`选中即查-1.0.zip` 传上去会变成 `-1.0.zip`。本仓库的 Release 用的是
+`选中即查-1.5.zip` 传上去会变成 `-1.5.zip`。本仓库的 Release 用的是
 `selected-lookup-<版本>.zip`。
 
 把压缩包发给别人，对方解压后**双击「安装.bat」**即可。安装会把程序放到
