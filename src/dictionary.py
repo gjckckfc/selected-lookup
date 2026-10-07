@@ -19,22 +19,42 @@ import wordrank
 
 TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z'\-]*")
 
-# 逐词拆解最多查这么多实词。浮窗按设置排序后再截到 6 条显示,
-# 所以这里留出余量: 排在前面的未必是原文里靠前的那几个词。
-MAX_PART_WORDS = 12
-
-# 逐词拆解时跳过这些功能词, 免得弹出结果里全是 "the / of / is"
+# 逐词拆解时跳过这些功能词, 免得弹出结果里全是 "the / of / is"。
+# 只放**没有释义价值的虚词**: 冠词、代词、be 动词、助动词、介词、连词、疑问词
+# 和最基本的副词。实词一个都不跳——要少看几个, 那是"隐藏基础词"该干的事,
+# 不是在这里删。单个词的查询不走这张表(查 the 就给你 the 的释义)。
 STOPWORDS = {
-    "the", "a", "an", "of", "to", "in", "on", "at", "for", "and", "or", "but",
-    "is", "are", "was", "were", "be", "been", "being", "that", "this", "these",
-    "those", "it", "its", "as", "by", "with", "from", "which", "who", "whom",
-    "whose", "if", "then", "than", "so", "such", "not", "no", "do", "does",
-    "did", "has", "have", "had", "will", "would", "shall", "should", "can",
-    "could", "may", "might", "must", "there", "here", "when", "where", "why",
-    "how", "all", "any", "both", "each", "few", "more", "most", "other",
-    "some", "only", "own", "same", "too", "very", "just", "we", "you", "they",
-    "he", "she", "his", "her", "their", "our", "your", "my", "me", "him",
-    "them", "us", "one", "two", "up", "out", "about", "into", "over", "after",
+    # 冠词 / 限定词 / 数量词
+    "the", "a", "an", "this", "that", "these", "those", "another", "every",
+    "each", "either", "neither", "both", "all", "any", "some", "no", "not",
+    "other", "such", "same", "own", "only", "enough", "several", "much",
+    "many", "more", "most", "less", "least", "little", "few", "one", "two",
+    "else",
+    # 代词
+    "i", "me", "my", "we", "us", "our", "you", "your", "he", "him", "his",
+    "she", "her", "it", "its", "they", "them", "their",
+    # be 动词 / 助动词 / 情态动词
+    "am", "is", "are", "was", "were", "be", "been", "being",
+    "do", "does", "did", "have", "has", "had",
+    "will", "would", "shall", "should", "can", "could", "may", "might", "must",
+    # 介词
+    "of", "to", "in", "on", "at", "for", "by", "with", "from", "as", "into",
+    "onto", "upon", "over", "under", "about", "after", "before", "between",
+    "among", "through", "during", "against", "without", "within", "toward",
+    "towards", "behind", "beyond", "beside", "besides", "despite", "except",
+    "per", "via", "off", "up", "out", "down", "along", "across", "around",
+    "near", "past", "since", "until", "till",
+    # 连词 / 连接副词
+    "and", "or", "but", "nor", "if", "then", "than", "so", "because", "while",
+    "though", "although", "unless", "whether", "whereas", "yet", "however",
+    "therefore", "thus", "hence", "whenever", "wherever", "whoever",
+    "whatever",
+    # 疑问词 / 关系词
+    "which", "who", "whom", "whose", "what", "when", "where", "why", "how",
+    # 最基本的副词
+    "here", "there", "now", "still", "always", "never", "ever", "often",
+    "again", "already", "almost", "soon", "too", "very", "just", "quite",
+    "rather", "maybe", "perhaps", "together",
 }
 
 # entries.tag 里的缩写
@@ -186,11 +206,11 @@ class Dictionary:
                                   matched_form=tokens[0])
             return Result(kind="miss", query=collapsed)
 
-        # 3) 多词短语：逐词拆解（最多 6 个词，去重）
+        # 3) 多词短语：逐词拆解（去重，跳过功能词，不设条数上限）
         content_words = [t for t in tokens if t.lower() not in STOPWORDS]
         if not content_words:
+            # 整句都是功能词("to be or not to be"): 那就别筛了, 全查
             content_words = tokens
-        content_words = content_words[:MAX_PART_WORDS]
 
         seen = set()
         parts = []

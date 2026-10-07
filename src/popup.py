@@ -63,7 +63,6 @@ DEFAULT_HOVER_OPAQUE = True     # 鼠标移上去时变完全不透明, 方便�
 PADDING_X = 32                  # 左右内边距 + 边框
 DRAG_SLOP = 4            # 松开时位移小于这个值算"点击", 否则算"拖动"
 MAX_DEF_LINES = 3        # 每个单词块最多显示几行释义
-DISPLAY_PARTS = 6        # 逐词拆解最多显示几个单词块(排完序再截)
 MAX_ORIGIN_LINES = 2     # 原文最多显示几行, 超出收起
 SCROLL_STEP = 26         # 滚轮一格滚多少像素
 PREWARM_DELAY = 250      # 鼠标在块上停多久就在后台预生成语音(毫秒)
@@ -737,8 +736,8 @@ class Popup:
         # breakdown: 整串没查到, 退回逐词
         self._header("逐词释义", "整串没有词条，下面按词拆开")
         all_lines = origin_lines + lead
-        parts = wordrank.order(result.parts, self.sort_mode)[:DISPLAY_PARTS]
-        for part in parts:
+        # 拆出来几个就显示几个: 高度本来就封顶, 多的用滚轮看
+        for part in wordrank.order(result.parts, self.sort_mode):
             entry, matched, token = part.entry, part.matched, part.token
             head = "%s -> %s" % (token, entry.word) if matched else token
             body = (entry.translation or entry.definition)[:MAX_DEF_LINES]
