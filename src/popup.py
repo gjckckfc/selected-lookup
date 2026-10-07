@@ -10,6 +10,7 @@
   - 顶部标题区固定不动(词头或原文 + 复制全部按钮)
   - 下面是内容区, 内容过多时限制最大高度并支持滚轮滚动
   - 原文用小字号, 超过两行自动收起, 点「展开全文」看全部
+  - 逐词释义按难度排序(生词优先), 排序方式在设置里改
 
 交互:
   - WS_EX_NOACTIVATE 不抢焦点
@@ -23,6 +24,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 
 from capture import write_clipboard_text
+import wordrank
 
 GWL_EXSTYLE = -20
 WS_EX_NOACTIVATE = 0x08000000
@@ -61,6 +63,7 @@ DEFAULT_HOVER_OPAQUE = True     # 鼠标移上去时变完全不透明, 方便�
 PADDING_X = 32                  # 左右内边距 + 边框
 DRAG_SLOP = 4            # 松开时位移小于这个值算"点击", 否则算"拖动"
 MAX_DEF_LINES = 3        # 每个单词块最多显示几行释义
+DISPLAY_PARTS = 6        # 逐词拆解最多显示几个单词块(排完序再截)
 MAX_ORIGIN_LINES = 2     # 原文最多显示几行, 超出收起
 SCROLL_STEP = 26         # 滚轮一格滚多少像素
 PREWARM_DELAY = 250      # 鼠标在块上停多久就在后台预生成语音(毫秒)
@@ -89,9 +92,11 @@ class Popup:
                  opacity=DEFAULT_OPACITY,
                  hover_opaque=DEFAULT_HOVER_OPAQUE, width=DEFAULT_WIDTH,
                  max_height=DEFAULT_MAX_HEIGHT, on_geometry=None,
-                 on_speak=None, on_stop_speak=None, on_prewarm=None):
+                 on_speak=None, on_stop_speak=None, on_prewarm=None,
+                 sort_mode=wordrank.DEFAULT_ORDER):
         self.master = master
         self.hide_after = hide_after
+        self.sort_mode = sort_mode
         self.radius = radius
         self.opacity = max(40, min(100, opacity))
         self.hover_opaque = hover_opaque
@@ -190,10 +195,12 @@ class Popup:
             # SetWindowRgn 会接管这块 region 的所有权, 不需要我们释放
             user32.SetWindowRgn(self._hwnd, region, True)
 
-    def apply_settings(self, hide_after=None):
-        """外观不开放给用户改, 这里只接受会影响行为的那一项。"""
+    def apply_settings(self, hide_after=None, sort_mode=None):
+        """外观不开放给用户改, 这里只接受会影响行为的那几项。"""
         if hide_after is not None:
             self.hide_after = hide_after
+        if sort_mode is not None:
+            self.sort_mode = sort_mode
 
     # ------------------------------------------------------------------
     # 滚动
@@ -730,7 +737,9 @@ class Popup:
         # breakdown: 整串没查到, 退回逐词
         self._header("逐词释义", "整串没有词条，下面按词拆开")
         all_lines = origin_lines + lead
-        for entry, matched, token in result.parts:
+        parts = wordrank.order(result.parts, self.sort_mode)[:DISPLAY_PARTS]
+        for part in parts:
+            entry, matched, token = part.entry, part.matched, part.token
             head = "%s -> %s" % (token, entry.word) if matched else token
             body = (entry.translation or entry.definition)[:MAX_DEF_LINES]
             copy_text = "\n".join([head] + body)

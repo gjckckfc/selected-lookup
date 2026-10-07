@@ -82,6 +82,7 @@ class App:
         self.popup = Popup(
             self.root,
             hide_after=self.settings.get("hide_after"),
+            sort_mode=self.settings.get("popup_order"),
             on_geometry=self._sync_popup_rect,
             on_speak=self._on_speak_request,
             on_stop_speak=self._on_speak_stop,
@@ -297,6 +298,8 @@ class App:
             self.watcher.drag_threshold = value
         elif key == "hide_after":
             self.popup.apply_settings(hide_after=value)
+        elif key == "popup_order":
+            self.popup.apply_settings(sort_mode=value)
         elif key in ("translate_enabled", "api_key", "model"):
             self._reload_translator()
             # 密钥填好/清空都立刻反映到托盘红灯上
@@ -321,7 +324,8 @@ class App:
 
     def _apply_all_settings(self):
         self.watcher.drag_threshold = self.settings.get("drag_threshold")
-        self.popup.apply_settings(hide_after=self.settings.get("hide_after"))
+        self.popup.apply_settings(hide_after=self.settings.get("hide_after"),
+                                  sort_mode=self.settings.get("popup_order"))
         note_on = bool(self.settings.get("notebook_enabled"))
         self.notebook.set_enabled(note_on)
         self.tray.set_notebook_enabled(note_on)

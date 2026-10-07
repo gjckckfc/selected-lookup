@@ -15,7 +15,13 @@ import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import wordrank
+
 TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z'\-]*")
+
+# 逐词拆解最多查这么多实词。浮窗按设置排序后再截到 6 条显示,
+# 所以这里留出余量: 排在前面的未必是原文里靠前的那几个词。
+MAX_PART_WORDS = 12
 
 # 逐词拆解时跳过这些功能词, 免得弹出结果里全是 "the / of / is"
 STOPWORDS = {
@@ -77,6 +83,16 @@ class Entry:
 
 
 @dataclass
+class Part:
+    """逐词拆解里的一块: 查到哪个词条、这次选中的是什么形式、有多难。"""
+
+    entry: Entry
+    matched: str = ""
+    token: str = ""
+    score: float = 0.0
+
+
+@dataclass
 class Result:
     kind: str                      # word | phrase | breakdown | miss
     query: str
@@ -125,6 +141,22 @@ class Dictionary:
         row = self.index.execute("select word from forms where form = ?", (form,)).fetchone()
         return row["word"] if row else None
 
+    def _difficulty(self, entry, token):
+        """这一块有多难: 词条自己和它词形还原后的词, 取更简单的那个。
+
+        ECDICT 里 raised/planned/governments 这类词形也有独立词条, 但它们的词频只是
+        "这个变形出现得多少", 不代表词本身难——你要是认识原形, 这个变形就不算生词。
+        所以两边都算一遍取更简单的那个(只在原形那侧真有词频/星级证据时才算数,
+        免得原形查不到数据, 反手把生词拉低)。
+        """
+        difficulty = wordrank.score(entry)
+        lemma = self._lemma_of(token)
+        if lemma:
+            base = self._entry_by_word(lemma)
+            if base is not None and wordrank.has_freq_evidence(base):
+                difficulty = min(difficulty, wordrank.score(base))
+        return difficulty
+
     # ---------- 对外接口 ----------
 
     def lookup(self, text):
@@ -158,7 +190,7 @@ class Dictionary:
         content_words = [t for t in tokens if t.lower() not in STOPWORDS]
         if not content_words:
             content_words = tokens
-        content_words = content_words[:6]
+        content_words = content_words[:MAX_PART_WORDS]
 
         seen = set()
         parts = []
@@ -175,7 +207,8 @@ class Dictionary:
                     part = self._entry_by_word(lemma)
                     matched = low
             if part:
-                parts.append((part, matched, low))
+                parts.append(Part(entry=part, matched=matched, token=low,
+                                  score=self._difficulty(part, low)))
 
         if parts:
             return Result(kind="breakdown", query=collapsed, parts=parts)

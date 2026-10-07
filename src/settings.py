@@ -8,10 +8,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import wordrank
+
 DEFAULTS = {
     "enabled": True,          # 启动时是否开启取词
     "drag_threshold": 6,      # 判定为拖选的像素阈值
     "hide_after": 5.0,        # 浮窗最长停留秒数, 取消选中会立刻收起
+    # --- 浮窗内容 ---
+    "popup_order": wordrank.DEFAULT_ORDER,  # 逐词释义的排序: hard 生词优先 / text 原文顺序 / easy 基础词优先
     # --- 生词本（本地 Markdown 沉淀，不联网）---
     "notebook_enabled": True,  # 选中即自动收录进 vocabulary/raw/
     # --- 朗读（用系统自带语音，不联网）---
@@ -29,11 +33,12 @@ DEFAULTS = {
 }
 
 # 字符串型设置, 不做数值夹取
-STR_KEYS = {"api_key", "model", "speak_mode", "speak_voice"}
+STR_KEYS = {"api_key", "model", "speak_mode", "speak_voice", "popup_order"}
 
 # 只能取固定几个值的字符串设置
 CHOICES = {
     "speak_mode": ("en", "both"),
+    "popup_order": wordrank.ORDERS,
 }
 
 # 每项的合法范围, 越界会被夹回来

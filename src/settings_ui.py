@@ -21,7 +21,7 @@ FONT = ("Microsoft YaHei UI", 9)
 TITLE_FONT = ("Microsoft YaHei UI", 11, "bold")
 AUTO_VOICE = "自动（推荐）"
 # 对齐用的字段标签(标签宽度按"中文算两格"折算, 取最长的那个 + 1)
-FIELD_LABELS = ("朗读内容", "英语声音", "语速")
+FIELD_LABELS = ("朗读内容", "英语声音", "语速", "释义排序")
 
 
 def _field_width():
@@ -134,6 +134,18 @@ class SettingsWindow:
         # 只有找不到英语语音时才需要这条"外援"路径
         self._speech_help = ttk.Button(sp, text="这台机器没有英语语音？去 Windows 里加一个",
                                        command=self._open_speech_settings)
+
+        # ---- 浮窗内容 ----
+        pc = ttk.LabelFrame(self.win, text="浮窗内容", padding=10,
+                            style="Group.TLabelframe")
+        pc.pack(fill="x", pady=(12, 0))
+        self._radio_row(pc, "popup_order",
+                        (("生词优先", "hard"), ("原文顺序", "text"), ("基础词优先", "easy")),
+                        label="释义排序")
+        ttk.Label(pc, text="整串查不到词条时，浮窗会把选中的文字拆成一个个词。"
+                           "排序决定哪个词排在最上面；生词优先按词频、柯林斯星级和考纲标签估算难度。",
+                  style="Hint.TLabel", wraplength=330, justify="left").pack(
+                      anchor="w", pady=(6, 0))
 
         # ---- 底部按钮 ----
         footer = ttk.Frame(self.win)

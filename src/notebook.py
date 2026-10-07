@@ -160,11 +160,14 @@ class Notebook:
             if translation:
                 fields.append(("translation", _collapse(translation)))
             gloss = []
-            for part, _matched, token in parts[:MAX_GLOSS_PARTS]:
-                lines = part.translation or part.definition
+            # 生词本按原文顺序记(不跟浮窗的排序设置走): raw 是事实层,
+            # 同一句话不管什么时候查、设置怎么改, 记下来的样子都一样。
+            for part in parts[:MAX_GLOSS_PARTS]:
+                lines = part.entry.translation or part.entry.definition
                 if not lines:
                     continue
-                gloss.append("%s %s" % (token, _collapse(lines[0], MAX_GLOSS_CHARS)))
+                gloss.append("%s %s" % (part.token,
+                                        _collapse(lines[0], MAX_GLOSS_CHARS)))
             if gloss:
                 fields.append(("gloss", "; ".join(gloss)))
             source = _collapse(query, MAX_SOURCE_CHARS)
